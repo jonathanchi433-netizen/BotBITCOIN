@@ -6,10 +6,15 @@ import hmac
 import hashlib
 import urllib.parse
 import requests
+import csv
+import json
 from datetime import datetime
 
 app = Flask(__name__)
 
+# =========================
+# Variables de entorno
+# =========================
 API_KEY = os.getenv("BINGX_API_KEY", "").strip()
 SECRET_KEY = os.getenv("BINGX_SECRET_KEY", "").strip()
 SYMBOL = os.getenv("SYMBOL", "BTC-USDT").strip()
@@ -17,7 +22,20 @@ LEVERAGE = int(os.getenv("LEVERAGE", "3"))
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "100"))
 
 BASE_URL = "https://open-api.bingx.com"
-LOG_FILE = "trades_log.csv"
+
+# =========================
+# Archivos locales
+# =========================
+TRADES_LOG_FILE = "trades_log.csv"
+EVENTS_LOG_FILE = "bot_events.csv"
+STATE_FILE = "position_state.json"
+
+
+# =========================
+# Utilidades generales
+# =========================
+def utc_now():
+    return datetime.utcnow().isoformat()
 
 
 def now_ms():
@@ -47,7 +65,10 @@ def bingx_request(method, path, params=None):
 
     query = sign_params(params)
     url = f"{BASE_URL}{path}?{query}"
-    headers = {"X-BX-APIKEY": API_KEY}
+
+    headers = {
+        "X-BX-APIKEY": API_KEY
+    }
 
     if method.upper() == "GET":
         response = requests.get(url, headers=headers, timeout=20)
@@ -58,13 +79,103 @@ def bingx_request(method, path, params=None):
     return data
 
 
+# =========================
+# Archivos de log / estado
+# =========================
+def ensure_files():
+    if not os.path.exists(TRADES_LOG_FILE):
+        with open(TRADES_LOG_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "opened_at",
+                "closed_at",
+                "side",
+                "symbol",
+                "leverage",
+                "risk_percent",
+                "qty",
+                "entry_price",
+                "exit_price",
+                "pnl_gross",
+                "close_reason"
+            ])
+
+    if not os.path.exists(EVENTS_LOG_FILE):
+        with open(EVENTS_LOG_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "timestamp",
+                "action",
+                "symbol",
+                "message",
+                "details"
+            ])
+
+
+def append_event_log(action, message, details):
+    ensure_files()
+    with open(EVENTS_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            utc_now(),
+            action,
+            SYMBOL,
+            message,
+            json.dumps(details, ensure_ascii=False)
+        ])
+
+
+def append_trade_log(opened_at, closed_at, side, qty, entry_price, exit_price, pnl_gross, close_reason):
+    ensure_files()
+    with open(TRADES_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            opened_at,
+            closed_at,
+            side,
+            SYMBOL,
+            LEVERAGE,
+            RISK_PERCENT,
+            qty,
+            entry_price,
+            exit_price,
+            pnl_gross,
+            close_reason
+        ])
+
+
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return None
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+
+
+def clear_state():
+    if os.path.exists(STATE_FILE):
+        os.remove(STATE_FILE)
+
+
+# =========================
+# Lectura de datos BingX
+# =========================
 def get_price():
     data = bingx_request("GET", "/openApi/swap/v2/quote/price", {
         "symbol": SYMBOL
     })
+
     price = data.get("data", {}).get("price")
     if not price:
         raise Exception(f"No se pudo obtener el precio: {data}")
+
     return float(price)
 
 
@@ -89,13 +200,15 @@ def get_positions():
     data = bingx_request("GET", "/openApi/swap/v2/user/positions", {
         "symbol": SYMBOL
     })
+
     positions = data.get("data", [])
     if isinstance(positions, dict):
         positions = [positions]
+
     return positions
 
 
-def get_current_position():
+def get_current_position_info():
     positions = get_positions()
 
     for pos in positions:
@@ -113,18 +226,50 @@ def get_current_position():
             continue
 
         side = str(pos.get("positionSide", "")).upper()
+        avg_price_raw = (
+            pos.get("avgPrice")
+            or pos.get("averagePrice")
+            or pos.get("positionAvgPrice")
+            or pos.get("avgOpenPrice")
+        )
+
+        avg_price = None
+        try:
+            if avg_price_raw is not None:
+                avg_price = float(avg_price_raw)
+        except Exception:
+            avg_price = None
 
         if side in ["LONG", "SHORT"]:
-            return side, abs(amount)
+            return {
+                "side": side,
+                "qty": abs(amount),
+                "entry_price": avg_price
+            }
 
         if amount > 0:
-            return "LONG", abs(amount)
+            return {
+                "side": "LONG",
+                "qty": abs(amount),
+                "entry_price": avg_price
+            }
         elif amount < 0:
-            return "SHORT", abs(amount)
+            return {
+                "side": "SHORT",
+                "qty": abs(amount),
+                "entry_price": avg_price
+            }
 
-    return "NONE", 0.0
+    return {
+        "side": "NONE",
+        "qty": 0.0,
+        "entry_price": None
+    }
 
 
+# =========================
+# Cálculo de orden
+# =========================
 def calculate_order_quantity():
     balance = get_balance()
     price = get_price()
@@ -138,6 +283,32 @@ def calculate_order_quantity():
         raise Exception("La cantidad calculada es 0. Revisa balance, leverage o precio.")
 
     return qty
+
+
+def extract_order_data(order_response):
+    """
+    Extrae avgPrice y executedQty de la respuesta de BingX.
+    """
+    order = order_response.get("data", {}).get("order", {})
+    avg_price_raw = order.get("avgPrice")
+    executed_qty_raw = order.get("executedQty") or order.get("quantity")
+
+    avg_price = None
+    executed_qty = None
+
+    try:
+        if avg_price_raw is not None:
+            avg_price = float(avg_price_raw)
+    except Exception:
+        avg_price = None
+
+    try:
+        if executed_qty_raw is not None:
+            executed_qty = float(executed_qty_raw)
+    except Exception:
+        executed_qty = None
+
+    return avg_price, executed_qty
 
 
 def place_order(side, quantity, reduce_only=False):
@@ -175,69 +346,213 @@ def open_new_position(action, qty):
         raise Exception("Acción inválida para abrir posición.")
 
 
-def ensure_log_file():
-    if not os.path.exists(LOG_FILE):
-        with open(LOG_FILE, "w", encoding="utf-8") as f:
-            f.write("timestamp,action,message,symbol,leverage,risk_percent,result_json\n")
+def calc_gross_pnl(side, qty, entry_price, exit_price):
+    if entry_price is None or exit_price is None:
+        return None
+
+    if side == "LONG":
+        return round((exit_price - entry_price) * qty, 6)
+    elif side == "SHORT":
+        return round((entry_price - exit_price) * qty, 6)
+
+    return None
 
 
-def append_trade_log(action, result):
-    ensure_log_file()
-    message = str(result.get("message", "")).replace(",", ";").replace("\n", " ")
-    result_json = str(result).replace(",", ";").replace("\n", " ")
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(
-            f"{datetime.utcnow().isoformat()},{action},{message},{SYMBOL},{LEVERAGE},{RISK_PERCENT},{result_json}\n"
-        )
+# =========================
+# Sincronización de estado
+# =========================
+def sync_state_with_exchange():
+    """
+    Intenta mantener el archivo STATE_FILE alineado con la posición real.
+    """
+    state = load_state()
+    current = get_current_position_info()
+
+    if current["side"] == "NONE":
+        if state is not None:
+            clear_state()
+        return None, current
+
+    if state is None:
+        # Si el bot no tiene estado local pero sí hay posición abierta,
+        # crea uno básico con lo que el exchange informa.
+        inferred_state = {
+            "side": current["side"],
+            "qty": current["qty"],
+            "entry_price": current["entry_price"],
+            "opened_at": utc_now(),
+            "symbol": SYMBOL,
+            "leverage": LEVERAGE,
+            "risk_percent": RISK_PERCENT
+        }
+        save_state(inferred_state)
+        state = inferred_state
+
+    return state, current
 
 
+# =========================
+# Lógica principal de flip
+# =========================
 def execute_flip(action):
-    current_side, current_qty = get_current_position()
+    state, current = sync_state_with_exchange()
+
+    current_side = current["side"]
+    current_qty = current["qty"]
+
     new_qty = calculate_order_quantity()
 
+    # ===================== BUY =====================
     if action == "buy":
         if current_side == "LONG":
             return {"message": "Ya estás en LONG, no se abre otra posición."}
 
         if current_side == "SHORT":
             close_result = close_position(current_side, current_qty)
+            close_price, closed_qty = extract_order_data(close_result)
+            closed_qty = closed_qty if closed_qty is not None else current_qty
+
+            # Log de trade cerrado
+            entry_price = state.get("entry_price") if state else None
+            opened_at = state.get("opened_at") if state else ""
+            pnl_gross = calc_gross_pnl("SHORT", closed_qty, entry_price, close_price)
+            append_trade_log(
+                opened_at=opened_at,
+                closed_at=utc_now(),
+                side="SHORT",
+                qty=closed_qty,
+                entry_price=entry_price,
+                exit_price=close_price,
+                pnl_gross=pnl_gross,
+                close_reason="flip_to_long"
+            )
+
             time.sleep(1)
+
             open_result = open_new_position("buy", new_qty)
+            open_price, open_qty = extract_order_data(open_result)
+            open_qty = open_qty if open_qty is not None else new_qty
+
+            new_state = {
+                "side": "LONG",
+                "qty": open_qty,
+                "entry_price": open_price,
+                "opened_at": utc_now(),
+                "symbol": SYMBOL,
+                "leverage": LEVERAGE,
+                "risk_percent": RISK_PERCENT
+            }
+            save_state(new_state)
+
             return {
                 "message": "SHORT cerrado y LONG abierto",
-                "closed_qty": current_qty,
-                "opened_qty": new_qty,
+                "closed_qty": closed_qty,
+                "closed_entry_price": entry_price,
+                "closed_exit_price": close_price,
+                "closed_pnl_gross": pnl_gross,
+                "opened_qty": open_qty,
+                "opened_entry_price": open_price,
                 "close_result": close_result,
                 "open_result": open_result
             }
 
+        # No había posición
         open_result = open_new_position("buy", new_qty)
+        open_price, open_qty = extract_order_data(open_result)
+        open_qty = open_qty if open_qty is not None else new_qty
+
+        new_state = {
+            "side": "LONG",
+            "qty": open_qty,
+            "entry_price": open_price,
+            "opened_at": utc_now(),
+            "symbol": SYMBOL,
+            "leverage": LEVERAGE,
+            "risk_percent": RISK_PERCENT
+        }
+        save_state(new_state)
+
         return {
             "message": "BUY ejecutado",
-            "sent_qty": new_qty,
+            "sent_qty": open_qty,
+            "opened_entry_price": open_price,
             "result": open_result
         }
 
+    # ===================== SELL =====================
     elif action == "sell":
         if current_side == "SHORT":
             return {"message": "Ya estás en SHORT, no se abre otra posición."}
 
         if current_side == "LONG":
             close_result = close_position(current_side, current_qty)
+            close_price, closed_qty = extract_order_data(close_result)
+            closed_qty = closed_qty if closed_qty is not None else current_qty
+
+            # Log de trade cerrado
+            entry_price = state.get("entry_price") if state else None
+            opened_at = state.get("opened_at") if state else ""
+            pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
+            append_trade_log(
+                opened_at=opened_at,
+                closed_at=utc_now(),
+                side="LONG",
+                qty=closed_qty,
+                entry_price=entry_price,
+                exit_price=close_price,
+                pnl_gross=pnl_gross,
+                close_reason="flip_to_short"
+            )
+
             time.sleep(1)
+
             open_result = open_new_position("sell", new_qty)
+            open_price, open_qty = extract_order_data(open_result)
+            open_qty = open_qty if open_qty is not None else new_qty
+
+            new_state = {
+                "side": "SHORT",
+                "qty": open_qty,
+                "entry_price": open_price,
+                "opened_at": utc_now(),
+                "symbol": SYMBOL,
+                "leverage": LEVERAGE,
+                "risk_percent": RISK_PERCENT
+            }
+            save_state(new_state)
+
             return {
                 "message": "LONG cerrado y SHORT abierto",
-                "closed_qty": current_qty,
-                "opened_qty": new_qty,
+                "closed_qty": closed_qty,
+                "closed_entry_price": entry_price,
+                "closed_exit_price": close_price,
+                "closed_pnl_gross": pnl_gross,
+                "opened_qty": open_qty,
+                "opened_entry_price": open_price,
                 "close_result": close_result,
                 "open_result": open_result
             }
 
+        # No había posición
         open_result = open_new_position("sell", new_qty)
+        open_price, open_qty = extract_order_data(open_result)
+        open_qty = open_qty if open_qty is not None else new_qty
+
+        new_state = {
+            "side": "SHORT",
+            "qty": open_qty,
+            "entry_price": open_price,
+            "opened_at": utc_now(),
+            "symbol": SYMBOL,
+            "leverage": LEVERAGE,
+            "risk_percent": RISK_PERCENT
+        }
+        save_state(new_state)
+
         return {
             "message": "SELL ejecutado",
-            "sent_qty": new_qty,
+            "sent_qty": open_qty,
+            "opened_entry_price": open_price,
             "result": open_result
         }
 
@@ -245,15 +560,24 @@ def execute_flip(action):
         raise Exception(f"Acción inválida: {action}")
 
 
+# =========================
+# Rutas Flask
+# =========================
 @app.route("/", methods=["GET"])
 def home():
     return "BOT ACTIVO", 200
 
 
 @app.route("/logs", methods=["GET"])
-def download_logs():
-    ensure_log_file()
-    return send_file(LOG_FILE, as_attachment=True)
+def download_trade_logs():
+    ensure_files()
+    return send_file(TRADES_LOG_FILE, as_attachment=True)
+
+
+@app.route("/events", methods=["GET"])
+def download_event_logs():
+    ensure_files()
+    return send_file(EVENTS_LOG_FILE, as_attachment=True)
 
 
 @app.route("/webhook", methods=["POST"])
@@ -264,6 +588,7 @@ def webhook():
     action = str(data.get("action", "")).lower().strip()
 
     if action not in ["buy", "sell"]:
+        append_event_log(action, "Acción inválida", {"received": data})
         return jsonify({
             "ok": False,
             "error": "Acción inválida",
@@ -275,9 +600,9 @@ def webhook():
         print("Resultado trade:", result, flush=True)
 
         try:
-            append_trade_log(action, result)
+            append_event_log(action, result.get("message", "Trade ejecutado"), result)
         except Exception as log_error:
-            print("Error guardando log:", log_error, flush=True)
+            print("Error guardando event log:", log_error, flush=True)
 
         return jsonify({
             "ok": True,
@@ -286,6 +611,12 @@ def webhook():
 
     except Exception as e:
         print("ERROR webhook:", str(e), flush=True)
+
+        try:
+            append_event_log(action, f"ERROR webhook: {str(e)}", {"received": data})
+        except Exception as log_error:
+            print("Error guardando event log:", log_error, flush=True)
+
         return jsonify({
             "ok": False,
             "error": str(e),
