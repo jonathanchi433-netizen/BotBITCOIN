@@ -21,7 +21,13 @@ SYMBOL = os.getenv("SYMBOL", "BTC-USDT").strip()
 LEVERAGE = int(os.getenv("LEVERAGE", "3"))
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "100"))
 
+# Colchón de seguridad para evitar insufficient margin
+# 0.95 = usa 95% de la cantidad calculada
+QTY_BUFFER = float(os.getenv("QTY_BUFFER", "0.95"))
+
 BASE_URL = "https://open-api.bingx.com"
+
+print(f"BOT CONFIG -> SYMBOL={SYMBOL}, LEVERAGE={LEVERAGE}, RISK_PERCENT={RISK_PERCENT}, QTY_BUFFER={QTY_BUFFER}", flush=True)
 
 # =========================
 # Archivos locales
@@ -277,7 +283,17 @@ def calculate_order_quantity():
     margin_to_use = balance * (RISK_PERCENT / 100.0)
     notional = margin_to_use * LEVERAGE
     qty = notional / price
+
+    # Colchón de seguridad para evitar insufficient margin
+    qty = qty * QTY_BUFFER
+
     qty = round_down(qty, 3)
+
+    print(
+        f"DEBUG QTY -> balance={balance}, price={price}, margin_to_use={margin_to_use}, "
+        f"notional={notional}, qty_buffered={qty}",
+        flush=True
+    )
 
     if qty <= 0:
         raise Exception("La cantidad calculada es 0. Revisa balance, leverage o precio.")
@@ -286,9 +302,6 @@ def calculate_order_quantity():
 
 
 def extract_order_data(order_response):
-    """
-    Extrae avgPrice y executedQty de la respuesta de BingX.
-    """
     order = order_response.get("data", {}).get("order", {})
     avg_price_raw = order.get("avgPrice")
     executed_qty_raw = order.get("executedQty") or order.get("quantity")
@@ -320,6 +333,8 @@ def place_order(side, quantity, reduce_only=False):
         "quantity": quantity,
         "reduceOnly": "true" if reduce_only else "false"
     }
+
+    print(f"ENVIANDO ORDEN -> side={side}, quantity={quantity}, reduce_only={reduce_only}", flush=True)
 
     data = bingx_request("POST", "/openApi/swap/v2/trade/order", params)
 
@@ -362,9 +377,6 @@ def calc_gross_pnl(side, qty, entry_price, exit_price):
 # Sincronización de estado
 # =========================
 def sync_state_with_exchange():
-    """
-    Intenta mantener el archivo STATE_FILE alineado con la posición real.
-    """
     state = load_state()
     current = get_current_position_info()
 
