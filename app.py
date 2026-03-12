@@ -374,8 +374,6 @@ def sync_state_with_exchange():
         return None, current
 
     if state is None:
-        # Si el bot no tiene estado local pero sí hay posición abierta,
-        # crea uno básico con lo que el exchange informa.
         inferred_state = {
             "side": current["side"],
             "qty": current["qty"],
@@ -412,10 +410,10 @@ def execute_flip(action):
             close_price, closed_qty = extract_order_data(close_result)
             closed_qty = closed_qty if closed_qty is not None else current_qty
 
-            # Log de trade cerrado
             entry_price = state.get("entry_price") if state else None
             opened_at = state.get("opened_at") if state else ""
             pnl_gross = calc_gross_pnl("SHORT", closed_qty, entry_price, close_price)
+
             append_trade_log(
                 opened_at=opened_at,
                 closed_at=utc_now(),
@@ -456,7 +454,6 @@ def execute_flip(action):
                 "open_result": open_result
             }
 
-        # No había posición
         open_result = open_new_position("buy", new_qty)
         open_price, open_qty = extract_order_data(open_result)
         open_qty = open_qty if open_qty is not None else new_qty
@@ -489,10 +486,10 @@ def execute_flip(action):
             close_price, closed_qty = extract_order_data(close_result)
             closed_qty = closed_qty if closed_qty is not None else current_qty
 
-            # Log de trade cerrado
             entry_price = state.get("entry_price") if state else None
             opened_at = state.get("opened_at") if state else ""
             pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
+
             append_trade_log(
                 opened_at=opened_at,
                 closed_at=utc_now(),
@@ -533,7 +530,6 @@ def execute_flip(action):
                 "open_result": open_result
             }
 
-        # No había posición
         open_result = open_new_position("sell", new_qty)
         open_price, open_qty = extract_order_data(open_result)
         open_qty = open_qty if open_qty is not None else new_qty
@@ -558,6 +554,87 @@ def execute_flip(action):
 
     else:
         raise Exception(f"Acción inválida: {action}")
+
+
+# =========================
+# Cierre sin invertir
+# =========================
+def execute_close_only(action):
+    state, current = sync_state_with_exchange()
+
+    current_side = current["side"]
+    current_qty = current["qty"]
+
+    if action == "close_long":
+        if current_side != "LONG":
+            return {"message": "No hay LONG abierto para cerrar."}
+
+        close_result = close_position(current_side, current_qty)
+        close_price, closed_qty = extract_order_data(close_result)
+        closed_qty = closed_qty if closed_qty is not None else current_qty
+
+        entry_price = state.get("entry_price") if state else None
+        opened_at = state.get("opened_at") if state else ""
+        pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
+
+        append_trade_log(
+            opened_at=opened_at,
+            closed_at=utc_now(),
+            side="LONG",
+            qty=closed_qty,
+            entry_price=entry_price,
+            exit_price=close_price,
+            pnl_gross=pnl_gross,
+            close_reason="close_long_only"
+        )
+
+        clear_state()
+
+        return {
+            "message": "LONG cerrado sin abrir SHORT",
+            "closed_qty": closed_qty,
+            "closed_entry_price": entry_price,
+            "closed_exit_price": close_price,
+            "closed_pnl_gross": pnl_gross,
+            "close_result": close_result
+        }
+
+    elif action == "close_short":
+        if current_side != "SHORT":
+            return {"message": "No hay SHORT abierto para cerrar."}
+
+        close_result = close_position(current_side, current_qty)
+        close_price, closed_qty = extract_order_data(close_result)
+        closed_qty = closed_qty if closed_qty is not None else current_qty
+
+        entry_price = state.get("entry_price") if state else None
+        opened_at = state.get("opened_at") if state else ""
+        pnl_gross = calc_gross_pnl("SHORT", closed_qty, entry_price, close_price)
+
+        append_trade_log(
+            opened_at=opened_at,
+            closed_at=utc_now(),
+            side="SHORT",
+            qty=closed_qty,
+            entry_price=entry_price,
+            exit_price=close_price,
+            pnl_gross=pnl_gross,
+            close_reason="close_short_only"
+        )
+
+        clear_state()
+
+        return {
+            "message": "SHORT cerrado sin abrir LONG",
+            "closed_qty": closed_qty,
+            "closed_entry_price": entry_price,
+            "closed_exit_price": close_price,
+            "closed_pnl_gross": pnl_gross,
+            "close_result": close_result
+        }
+
+    else:
+        raise Exception(f"Acción inválida para cierre: {action}")
 
 
 # =========================
@@ -587,7 +664,9 @@ def webhook():
 
     action = str(data.get("action", "")).lower().strip()
 
-    if action not in ["buy", "sell"]:
+    valid_actions = ["buy", "sell", "close_long", "close_short"]
+
+    if action not in valid_actions:
         append_event_log(action, "Acción inválida", {"received": data})
         return jsonify({
             "ok": False,
@@ -596,7 +675,11 @@ def webhook():
         }), 400
 
     try:
-        result = execute_flip(action)
+        if action in ["buy", "sell"]:
+            result = execute_flip(action)
+        else:
+            result = execute_close_only(action)
+
         print("Resultado trade:", result, flush=True)
 
         try:
@@ -622,3 +705,8 @@ def webhook():
             "error": str(e),
             "received": data
         }), 500
+
+
+if __name__ == "__main__":
+    ensure_files()
+    app.run(host="0.0.0.0", port=10000)
