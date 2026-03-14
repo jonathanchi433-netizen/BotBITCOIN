@@ -21,10 +21,10 @@ SECRET_KEY = os.getenv("BINGX_SECRET_KEY", "").strip()
 SYMBOL = os.getenv("SYMBOL", "BTC-USDT").strip()
 LEVERAGE = int(os.getenv("LEVERAGE", "5"))
 
-# Riesgo base de respaldo si la IA no define uno
+# Riesgo base de respaldo
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "30"))
 
-# Colchón de seguridad para evitar insufficient margin
+# Colchón de seguridad
 QTY_BUFFER = float(os.getenv("QTY_BUFFER", "0.95"))
 
 # OpenAI
@@ -32,22 +32,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4").strip()
 AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "true").strip().lower() == "true"
 
-# Tiers de probabilidad / riesgo pedidos por ti
-# LOW  -> 30% del capital
-# MED  -> 50% del capital
-# HIGH -> 85% del capital
-RISK_LOW_PERCENT = float(os.getenv("RISK_LOW_PERCENT", "30"))
-RISK_MEDIUM_PERCENT = float(os.getenv("RISK_MEDIUM_PERCENT", "50"))
+# Solo esta variable la estás usando externamente
 RISK_HIGH_PERCENT = float(os.getenv("RISK_HIGH_PERCENT", "85"))
 
-# Umbrales de probabilidad
-# 0-29  = reject
-# 30-59 = low
-# 60-89 = medium
-# 90-100 = high
-LOW_THRESHOLD = int(os.getenv("LOW_THRESHOLD", "30"))
-MEDIUM_THRESHOLD = int(os.getenv("MEDIUM_THRESHOLD", "60"))
-HIGH_THRESHOLD = int(os.getenv("HIGH_THRESHOLD", "90"))
+# Gestión fija interna
+RISK_LOW_PERCENT = 30.0
+RISK_MEDIUM_PERCENT = 55.0
 
 BASE_URL = "https://open-api.bingx.com"
 
@@ -84,6 +74,43 @@ def round_down(value, decimals=3):
     return math.floor(value * factor) / factor
 
 
+def safe_float(value, default=None):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def safe_int(value, default=None):
+    try:
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def extract_json_from_text(text: str):
+    if not text:
+        return None
+
+    cleaned = text.replace("```json", "").replace("```", "").strip()
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = cleaned[start:end + 1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            return None
+
+    return None
+
+
 def sign_params(params: dict) -> str:
     params["timestamp"] = now_ms()
     sorted_params = sorted(params.items())
@@ -118,50 +145,8 @@ def bingx_request(method, path, params=None):
     return data
 
 
-def extract_json_from_text(text: str):
-    """
-    Intenta extraer el primer objeto JSON válido de un string.
-    """
-    if not text:
-        return None
-
-    cleaned = text.replace("```json", "").replace("```", "").strip()
-
-    # Caso simple: ya es JSON puro
-    try:
-        return json.loads(cleaned)
-    except Exception:
-        pass
-
-    # Intento encontrar desde la primera { hasta la última }
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = cleaned[start:end + 1]
-        try:
-            return json.loads(candidate)
-        except Exception:
-            return None
-
-    return None
-
-
-def safe_float(value, default=None):
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
-def safe_int(value, default=None):
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-
 # =========================
-# Archivos de log / estado
+# Logs / estado
 # =========================
 def ensure_files():
     if not os.path.exists(TRADES_LOG_FILE):
@@ -246,7 +231,7 @@ def clear_state():
 
 
 # =========================
-# Lectura de datos BingX
+# Lectura BingX
 # =========================
 def get_price():
     data = bingx_request("GET", "/openApi/swap/v2/quote/price", {
@@ -349,30 +334,23 @@ def get_current_position_info():
 
 
 # =========================
-# IA como filtro
+# IA - probabilidad
 # =========================
-def probability_to_tier(probability: int):
-    if probability >= HIGH_THRESHOLD:
-        return "HIGH", RISK_HIGH_PERCENT
-    elif probability >= MEDIUM_THRESHOLD:
-        return "MEDIUM", RISK_MEDIUM_PERCENT
-    elif probability >= LOW_THRESHOLD:
-        return "LOW", RISK_LOW_PERCENT
-    else:
+def probability_to_risk(probability: int):
+    if probability < 30:
         return "REJECT", 0.0
+    elif 30 <= probability <= 59:
+        return "LOW", RISK_LOW_PERCENT
+    elif 60 <= probability <= 80:
+        return "MEDIUM", RISK_MEDIUM_PERCENT
+    else:
+        return "HIGH", RISK_HIGH_PERCENT
 
 
 def ai_filter_signal(action, payload):
     """
-    La IA puede usar internet (web_search) para evaluar contexto general.
-    Devuelve:
-    {
-      decision: APPROVE / REJECT,
-      probability: 0..100,
-      tier: REJECT / LOW / MEDIUM / HIGH,
-      risk_percent: 0 / 30 / 50 / 85,
-      reason: "..."
-    }
+    El 15m no bloquea por sí solo.
+    Solo sube o baja la probabilidad final.
     """
 
     if not AI_FILTER_ENABLED:
@@ -394,62 +372,56 @@ def ai_filter_signal(action, payload):
         }
 
     try:
-        try:
-            current_price = get_price()
-        except Exception:
-            current_price = None
-
-        try:
-            balance = get_balance()
-        except Exception:
-            balance = None
-
-        try:
-            state, current = sync_state_with_exchange()
-        except Exception:
-            state, current = None, {"side": "UNKNOWN", "qty": 0.0, "entry_price": None}
-
         signal_context = {
-            "action": action.upper(),
-            "symbol": SYMBOL,
-            "source": payload.get("source", ""),
+            "action": str(action).upper(),
+            "symbol": payload.get("symbol", "BTCUSDT"),
             "mode": payload.get("mode", ""),
+            "source": payload.get("source", ""),
             "timeframe": payload.get("timeframe", "5m"),
-            "current_price": current_price,
-            "balance": balance,
-            "current_position_side": current.get("side"),
-            "current_position_qty": current.get("qty"),
-            "current_position_entry": current.get("entry_price"),
-            "leverage": LEVERAGE,
+            "htf": payload.get("htf", "15"),
+            "close_price": safe_float(payload.get("close_price")),
+            "ema13_5m": safe_float(payload.get("ema13")),
+            "ema62_5m": safe_float(payload.get("ema62")),
+            "ema200_5m": safe_float(payload.get("ema200")),
+            "adx_5m": safe_float(payload.get("adx")),
+            "stoch_k_5m": safe_float(payload.get("stoch_k")),
+            "stoch_d_5m": safe_float(payload.get("stoch_d")),
+            "close_15m": safe_float(payload.get("close_15m")),
+            "ema13_15m": safe_float(payload.get("ema13_15m")),
+            "ema62_15m": safe_float(payload.get("ema62_15m")),
+            "ema200_15m": safe_float(payload.get("ema200_15m")),
+            "adx_15m": safe_float(payload.get("adx_15m")),
+            "stoch_k_15m": safe_float(payload.get("stoch_k_15m")),
+            "stoch_d_15m": safe_float(payload.get("stoch_d_15m")),
+            "trend_15m": str(payload.get("trend_15m", "neutral")).lower(),
             "utc_time": utc_now()
         }
 
         system_prompt = """
-You are a conservative trading risk filter for a BTCUSDT futures bot.
+You are a conservative BTCUSDT trading probability evaluator.
 
-Your task:
-- Evaluate a single BUY or SELL signal.
-- You may use web search to inspect broad market/news/risk context.
-- Also use the signal context provided.
-- Estimate the probability that the signal is good enough to trade.
+Important:
+- Main trigger timeframe is 5m.
+- 15m is NOT a hard blocker.
+- 15m only adjusts probability up or down.
+- If 5m is strong but 15m disagrees, lower probability instead of always rejecting.
+- Reject only if setup is very weak, noisy, strongly ranging, contradictory, or poor quality.
 
-Rules:
-- Reply with JSON only.
-- No markdown.
-- No explanations outside JSON.
-- If the market appears unclear, noisy, strongly ranging, or too risky, reduce probability.
-- If confidence is low, reject.
-- Be conservative.
-
-JSON schema:
+Return ONLY valid JSON:
 {
   "decision": "APPROVE" or "REJECT",
   "probability": 0,
   "reason": "short explanation"
 }
+
+Probability policy:
+- 0-29  = reject
+- 30-59 = low quality but executable
+- 60-80 = medium quality
+- 81-100 = high quality
 """
 
-        user_prompt = f"Evaluate this BTCUSDT signal:\n{json.dumps(signal_context, ensure_ascii=False)}"
+        user_prompt = f"Evaluate this BTCUSDT signal context:\n{json.dumps(signal_context, ensure_ascii=False)}"
 
         response = client.responses.create(
             model=OPENAI_MODEL,
@@ -476,22 +448,17 @@ JSON schema:
         probability = safe_int(parsed.get("probability", 0), 0)
         reason = str(parsed.get("reason", "")).strip()
 
-        if probability < 0:
-            probability = 0
-        if probability > 100:
-            probability = 100
+        probability = max(0, min(100, probability))
 
-        tier, risk_percent = probability_to_tier(probability)
+        tier, risk_percent = probability_to_risk(probability)
 
-        # regla final:
-        # si la IA dice REJECT o probabilidad < 30 => bloquear
-        if decision != "APPROVE" or probability < LOW_THRESHOLD:
+        if decision != "APPROVE" or probability < 30:
             return {
                 "decision": "REJECT",
                 "probability": probability,
                 "tier": "REJECT",
                 "risk_percent": 0.0,
-                "reason": reason or "Probability below minimum threshold"
+                "reason": reason or "Probability below execution threshold"
             }
 
         return {
@@ -614,7 +581,7 @@ def calc_gross_pnl(side, qty, entry_price, exit_price):
 
 
 # =========================
-# Sincronización de estado
+# Sincronización
 # =========================
 def sync_state_with_exchange():
     state = load_state()
@@ -642,7 +609,7 @@ def sync_state_with_exchange():
 
 
 # =========================
-# Lógica principal de flip
+# Flip principal
 # =========================
 def execute_flip(action, risk_percent_override=None):
     state, current = sync_state_with_exchange()
@@ -652,7 +619,6 @@ def execute_flip(action, risk_percent_override=None):
 
     new_qty, selected_risk_percent = calculate_order_quantity(risk_percent_override)
 
-    # ===================== BUY =====================
     if action == "buy":
         if current_side == "LONG":
             return {"message": "Ya estás en LONG, no se abre otra posición."}
@@ -732,7 +698,6 @@ def execute_flip(action, risk_percent_override=None):
             "result": open_result
         }
 
-    # ===================== SELL =====================
     elif action == "sell":
         if current_side == "SHORT":
             return {"message": "Ya estás en SHORT, no se abre otra posición."}
@@ -906,7 +871,7 @@ def execute_close_only(action):
 # =========================
 @app.route("/", methods=["GET"])
 def home():
-    return "BOT ACTIVO CON FILTRO IA", 200
+    return "BOT ACTIVO CON IA + 15M PROBABILITY", 200
 
 
 @app.route("/logs", methods=["GET"])
@@ -937,6 +902,17 @@ def webhook():
     print("Señal recibida:", data, flush=True)
 
     action = str(data.get("action", "")).lower().strip()
+
+    # Normalizamos por si TradingView manda BUY / SELL en mayúsculas
+    if action == "buy":
+        action = "buy"
+    elif action == "sell":
+        action = "sell"
+    elif action == "close_long":
+        action = "close_long"
+    elif action == "close_short":
+        action = "close_short"
+
     valid_actions = ["buy", "sell", "close_long", "close_short"]
 
     if action not in valid_actions:
@@ -948,7 +924,6 @@ def webhook():
         }), 400
 
     try:
-        # BUY / SELL pasan por filtro IA
         if action in ["buy", "sell"]:
             ai_result = ai_filter_signal(action, data)
 
@@ -962,7 +937,7 @@ def webhook():
                 return jsonify({
                     "ok": True,
                     "filtered": True,
-                    "message": "Trade bloqueado por filtro IA",
+                    "message": "Trade bloqueado por probabilidad baja",
                     "ai_result": ai_result,
                     "received": data
                 }), 200
@@ -974,7 +949,6 @@ def webhook():
             result["ai_result"] = ai_result
 
         else:
-            # close_long / close_short no pasan por IA
             result = execute_close_only(action)
 
         print("Resultado trade:", result, flush=True)
