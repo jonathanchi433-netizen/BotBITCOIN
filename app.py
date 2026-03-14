@@ -32,10 +32,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4").strip()
 AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "true").strip().lower() == "true"
 
-# Solo esta variable la estás usando externamente
+# Variable externa que ya tienes
 RISK_HIGH_PERCENT = float(os.getenv("RISK_HIGH_PERCENT", "85"))
 
-# Gestión fija interna
+# Gestión interna fija
 RISK_LOW_PERCENT = 30.0
 RISK_MEDIUM_PERCENT = 55.0
 
@@ -903,7 +903,6 @@ def webhook():
 
     action = str(data.get("action", "")).lower().strip()
 
-    # Normalizamos por si TradingView manda BUY / SELL en mayúsculas
     if action == "buy":
         action = "buy"
     elif action == "sell":
@@ -927,6 +926,15 @@ def webhook():
         if action in ["buy", "sell"]:
             ai_result = ai_filter_signal(action, data)
 
+            print(
+                f"AI RESULT -> decision={ai_result.get('decision')}, "
+                f"probability={ai_result.get('probability')}, "
+                f"tier={ai_result.get('tier')}, "
+                f"risk_percent={ai_result.get('risk_percent')}, "
+                f"reason={ai_result.get('reason')}",
+                flush=True
+            )
+
             append_event_log(
                 action,
                 "AI filter evaluated",
@@ -934,6 +942,7 @@ def webhook():
             )
 
             if ai_result["decision"] != "APPROVE":
+                print("TRADE BLOQUEADO -> probabilidad insuficiente", flush=True)
                 return jsonify({
                     "ok": True,
                     "filtered": True,
@@ -941,6 +950,13 @@ def webhook():
                     "ai_result": ai_result,
                     "received": data
                 }), 200
+
+            print(
+                f"TRADE APROBADO -> action={action}, "
+                f"probability={ai_result.get('probability')}, "
+                f"risk_percent={ai_result.get('risk_percent')}",
+                flush=True
+            )
 
             result = execute_flip(
                 action,
