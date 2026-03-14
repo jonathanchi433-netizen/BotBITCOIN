@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, send_file
+from openai import OpenAI
 import os
 import time
 import math
@@ -18,16 +19,46 @@ app = Flask(__name__)
 API_KEY = os.getenv("BINGX_API_KEY", "").strip()
 SECRET_KEY = os.getenv("BINGX_SECRET_KEY", "").strip()
 SYMBOL = os.getenv("SYMBOL", "BTC-USDT").strip()
-LEVERAGE = int(os.getenv("LEVERAGE", "3"))
-RISK_PERCENT = float(os.getenv("RISK_PERCENT", "100"))
+LEVERAGE = int(os.getenv("LEVERAGE", "5"))
+
+# Riesgo base de respaldo si la IA no define uno
+RISK_PERCENT = float(os.getenv("RISK_PERCENT", "30"))
 
 # Colchón de seguridad para evitar insufficient margin
-# 0.95 = usa 95% de la cantidad calculada
 QTY_BUFFER = float(os.getenv("QTY_BUFFER", "0.95"))
+
+# OpenAI
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4").strip()
+AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "true").strip().lower() == "true"
+
+# Tiers de probabilidad / riesgo pedidos por ti
+# LOW  -> 30% del capital
+# MED  -> 50% del capital
+# HIGH -> 85% del capital
+RISK_LOW_PERCENT = float(os.getenv("RISK_LOW_PERCENT", "30"))
+RISK_MEDIUM_PERCENT = float(os.getenv("RISK_MEDIUM_PERCENT", "50"))
+RISK_HIGH_PERCENT = float(os.getenv("RISK_HIGH_PERCENT", "85"))
+
+# Umbrales de probabilidad
+# 0-29  = reject
+# 30-59 = low
+# 60-89 = medium
+# 90-100 = high
+LOW_THRESHOLD = int(os.getenv("LOW_THRESHOLD", "30"))
+MEDIUM_THRESHOLD = int(os.getenv("MEDIUM_THRESHOLD", "60"))
+HIGH_THRESHOLD = int(os.getenv("HIGH_THRESHOLD", "90"))
 
 BASE_URL = "https://open-api.bingx.com"
 
-print(f"BOT CONFIG -> SYMBOL={SYMBOL}, LEVERAGE={LEVERAGE}, RISK_PERCENT={RISK_PERCENT}, QTY_BUFFER={QTY_BUFFER}", flush=True)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+print(
+    f"BOT CONFIG -> SYMBOL={SYMBOL}, LEVERAGE={LEVERAGE}, "
+    f"RISK_PERCENT={RISK_PERCENT}, QTY_BUFFER={QTY_BUFFER}, "
+    f"AI_FILTER_ENABLED={AI_FILTER_ENABLED}, OPENAI_MODEL={OPENAI_MODEL}",
+    flush=True
+)
 
 # =========================
 # Archivos locales
@@ -72,17 +103,61 @@ def bingx_request(method, path, params=None):
     query = sign_params(params)
     url = f"{BASE_URL}{path}?{query}"
 
-    headers = {
-        "X-BX-APIKEY": API_KEY
-    }
+    headers = {"X-BX-APIKEY": API_KEY}
 
     if method.upper() == "GET":
         response = requests.get(url, headers=headers, timeout=20)
     else:
         response = requests.post(url, headers=headers, timeout=20)
 
-    data = response.json()
+    try:
+        data = response.json()
+    except Exception:
+        raise Exception(f"Respuesta no JSON de BingX: {response.text}")
+
     return data
+
+
+def extract_json_from_text(text: str):
+    """
+    Intenta extraer el primer objeto JSON válido de un string.
+    """
+    if not text:
+        return None
+
+    cleaned = text.replace("```json", "").replace("```", "").strip()
+
+    # Caso simple: ya es JSON puro
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # Intento encontrar desde la primera { hasta la última }
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = cleaned[start:end + 1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            return None
+
+    return None
+
+
+def safe_float(value, default=None):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def safe_int(value, default=None):
+    try:
+        return int(value)
+    except Exception:
+        return default
 
 
 # =========================
@@ -131,7 +206,7 @@ def append_event_log(action, message, details):
         ])
 
 
-def append_trade_log(opened_at, closed_at, side, qty, entry_price, exit_price, pnl_gross, close_reason):
+def append_trade_log(opened_at, closed_at, side, qty, entry_price, exit_price, pnl_gross, close_reason, risk_percent_used):
     ensure_files()
     with open(TRADES_LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -141,7 +216,7 @@ def append_trade_log(opened_at, closed_at, side, qty, entry_price, exit_price, p
             side,
             SYMBOL,
             LEVERAGE,
-            RISK_PERCENT,
+            risk_percent_used,
             qty,
             entry_price,
             exit_price,
@@ -274,23 +349,188 @@ def get_current_position_info():
 
 
 # =========================
+# IA como filtro
+# =========================
+def probability_to_tier(probability: int):
+    if probability >= HIGH_THRESHOLD:
+        return "HIGH", RISK_HIGH_PERCENT
+    elif probability >= MEDIUM_THRESHOLD:
+        return "MEDIUM", RISK_MEDIUM_PERCENT
+    elif probability >= LOW_THRESHOLD:
+        return "LOW", RISK_LOW_PERCENT
+    else:
+        return "REJECT", 0.0
+
+
+def ai_filter_signal(action, payload):
+    """
+    La IA puede usar internet (web_search) para evaluar contexto general.
+    Devuelve:
+    {
+      decision: APPROVE / REJECT,
+      probability: 0..100,
+      tier: REJECT / LOW / MEDIUM / HIGH,
+      risk_percent: 0 / 30 / 50 / 85,
+      reason: "..."
+    }
+    """
+
+    if not AI_FILTER_ENABLED:
+        return {
+            "decision": "APPROVE",
+            "probability": 100,
+            "tier": "HIGH",
+            "risk_percent": RISK_HIGH_PERCENT,
+            "reason": "AI filter disabled"
+        }
+
+    if client is None:
+        return {
+            "decision": "REJECT",
+            "probability": 0,
+            "tier": "REJECT",
+            "risk_percent": 0.0,
+            "reason": "OPENAI_API_KEY missing"
+        }
+
+    try:
+        try:
+            current_price = get_price()
+        except Exception:
+            current_price = None
+
+        try:
+            balance = get_balance()
+        except Exception:
+            balance = None
+
+        try:
+            state, current = sync_state_with_exchange()
+        except Exception:
+            state, current = None, {"side": "UNKNOWN", "qty": 0.0, "entry_price": None}
+
+        signal_context = {
+            "action": action.upper(),
+            "symbol": SYMBOL,
+            "source": payload.get("source", ""),
+            "mode": payload.get("mode", ""),
+            "timeframe": payload.get("timeframe", "5m"),
+            "current_price": current_price,
+            "balance": balance,
+            "current_position_side": current.get("side"),
+            "current_position_qty": current.get("qty"),
+            "current_position_entry": current.get("entry_price"),
+            "leverage": LEVERAGE,
+            "utc_time": utc_now()
+        }
+
+        system_prompt = """
+You are a conservative trading risk filter for a BTCUSDT futures bot.
+
+Your task:
+- Evaluate a single BUY or SELL signal.
+- You may use web search to inspect broad market/news/risk context.
+- Also use the signal context provided.
+- Estimate the probability that the signal is good enough to trade.
+
+Rules:
+- Reply with JSON only.
+- No markdown.
+- No explanations outside JSON.
+- If the market appears unclear, noisy, strongly ranging, or too risky, reduce probability.
+- If confidence is low, reject.
+- Be conservative.
+
+JSON schema:
+{
+  "decision": "APPROVE" or "REJECT",
+  "probability": 0,
+  "reason": "short explanation"
+}
+"""
+
+        user_prompt = f"Evaluate this BTCUSDT signal:\n{json.dumps(signal_context, ensure_ascii=False)}"
+
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            tools=[{"type": "web_search"}],
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        raw_text = response.output_text.strip()
+        parsed = extract_json_from_text(raw_text)
+
+        if not parsed:
+            return {
+                "decision": "REJECT",
+                "probability": 0,
+                "tier": "REJECT",
+                "risk_percent": 0.0,
+                "reason": f"Invalid AI output: {raw_text[:300]}"
+            }
+
+        decision = str(parsed.get("decision", "REJECT")).upper().strip()
+        probability = safe_int(parsed.get("probability", 0), 0)
+        reason = str(parsed.get("reason", "")).strip()
+
+        if probability < 0:
+            probability = 0
+        if probability > 100:
+            probability = 100
+
+        tier, risk_percent = probability_to_tier(probability)
+
+        # regla final:
+        # si la IA dice REJECT o probabilidad < 30 => bloquear
+        if decision != "APPROVE" or probability < LOW_THRESHOLD:
+            return {
+                "decision": "REJECT",
+                "probability": probability,
+                "tier": "REJECT",
+                "risk_percent": 0.0,
+                "reason": reason or "Probability below minimum threshold"
+            }
+
+        return {
+            "decision": "APPROVE",
+            "probability": probability,
+            "tier": tier,
+            "risk_percent": risk_percent,
+            "reason": reason
+        }
+
+    except Exception as e:
+        return {
+            "decision": "REJECT",
+            "probability": 0,
+            "tier": "REJECT",
+            "risk_percent": 0.0,
+            "reason": f"AI filter error: {str(e)}"
+        }
+
+
+# =========================
 # Cálculo de orden
 # =========================
-def calculate_order_quantity():
+def calculate_order_quantity(risk_percent_override=None):
     balance = get_balance()
     price = get_price()
 
-    margin_to_use = balance * (RISK_PERCENT / 100.0)
+    selected_risk_percent = risk_percent_override if risk_percent_override is not None else RISK_PERCENT
+
+    margin_to_use = balance * (selected_risk_percent / 100.0)
     notional = margin_to_use * LEVERAGE
     qty = notional / price
 
-    # Colchón de seguridad para evitar insufficient margin
     qty = qty * QTY_BUFFER
-
     qty = round_down(qty, 3)
 
     print(
-        f"DEBUG QTY -> balance={balance}, price={price}, margin_to_use={margin_to_use}, "
+        f"DEBUG QTY -> balance={balance}, price={price}, "
+        f"risk_percent={selected_risk_percent}, margin_to_use={margin_to_use}, "
         f"notional={notional}, qty_buffered={qty}",
         flush=True
     )
@@ -298,7 +538,7 @@ def calculate_order_quantity():
     if qty <= 0:
         raise Exception("La cantidad calculada es 0. Revisa balance, leverage o precio.")
 
-    return qty
+    return qty, selected_risk_percent
 
 
 def extract_order_data(order_response):
@@ -404,13 +644,13 @@ def sync_state_with_exchange():
 # =========================
 # Lógica principal de flip
 # =========================
-def execute_flip(action):
+def execute_flip(action, risk_percent_override=None):
     state, current = sync_state_with_exchange()
 
     current_side = current["side"]
     current_qty = current["qty"]
 
-    new_qty = calculate_order_quantity()
+    new_qty, selected_risk_percent = calculate_order_quantity(risk_percent_override)
 
     # ===================== BUY =====================
     if action == "buy":
@@ -424,6 +664,7 @@ def execute_flip(action):
 
             entry_price = state.get("entry_price") if state else None
             opened_at = state.get("opened_at") if state else ""
+            prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
             pnl_gross = calc_gross_pnl("SHORT", closed_qty, entry_price, close_price)
 
             append_trade_log(
@@ -434,7 +675,8 @@ def execute_flip(action):
                 entry_price=entry_price,
                 exit_price=close_price,
                 pnl_gross=pnl_gross,
-                close_reason="flip_to_long"
+                close_reason="flip_to_long",
+                risk_percent_used=prev_risk_percent
             )
 
             time.sleep(1)
@@ -450,12 +692,13 @@ def execute_flip(action):
                 "opened_at": utc_now(),
                 "symbol": SYMBOL,
                 "leverage": LEVERAGE,
-                "risk_percent": RISK_PERCENT
+                "risk_percent": selected_risk_percent
             }
             save_state(new_state)
 
             return {
                 "message": "SHORT cerrado y LONG abierto",
+                "risk_percent_used": selected_risk_percent,
                 "closed_qty": closed_qty,
                 "closed_entry_price": entry_price,
                 "closed_exit_price": close_price,
@@ -477,12 +720,13 @@ def execute_flip(action):
             "opened_at": utc_now(),
             "symbol": SYMBOL,
             "leverage": LEVERAGE,
-            "risk_percent": RISK_PERCENT
+            "risk_percent": selected_risk_percent
         }
         save_state(new_state)
 
         return {
             "message": "BUY ejecutado",
+            "risk_percent_used": selected_risk_percent,
             "sent_qty": open_qty,
             "opened_entry_price": open_price,
             "result": open_result
@@ -500,6 +744,7 @@ def execute_flip(action):
 
             entry_price = state.get("entry_price") if state else None
             opened_at = state.get("opened_at") if state else ""
+            prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
             pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
 
             append_trade_log(
@@ -510,7 +755,8 @@ def execute_flip(action):
                 entry_price=entry_price,
                 exit_price=close_price,
                 pnl_gross=pnl_gross,
-                close_reason="flip_to_short"
+                close_reason="flip_to_short",
+                risk_percent_used=prev_risk_percent
             )
 
             time.sleep(1)
@@ -526,12 +772,13 @@ def execute_flip(action):
                 "opened_at": utc_now(),
                 "symbol": SYMBOL,
                 "leverage": LEVERAGE,
-                "risk_percent": RISK_PERCENT
+                "risk_percent": selected_risk_percent
             }
             save_state(new_state)
 
             return {
                 "message": "LONG cerrado y SHORT abierto",
+                "risk_percent_used": selected_risk_percent,
                 "closed_qty": closed_qty,
                 "closed_entry_price": entry_price,
                 "closed_exit_price": close_price,
@@ -553,12 +800,13 @@ def execute_flip(action):
             "opened_at": utc_now(),
             "symbol": SYMBOL,
             "leverage": LEVERAGE,
-            "risk_percent": RISK_PERCENT
+            "risk_percent": selected_risk_percent
         }
         save_state(new_state)
 
         return {
             "message": "SELL ejecutado",
+            "risk_percent_used": selected_risk_percent,
             "sent_qty": open_qty,
             "opened_entry_price": open_price,
             "result": open_result
@@ -587,6 +835,7 @@ def execute_close_only(action):
 
         entry_price = state.get("entry_price") if state else None
         opened_at = state.get("opened_at") if state else ""
+        prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
         pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
 
         append_trade_log(
@@ -597,7 +846,8 @@ def execute_close_only(action):
             entry_price=entry_price,
             exit_price=close_price,
             pnl_gross=pnl_gross,
-            close_reason="close_long_only"
+            close_reason="close_long_only",
+            risk_percent_used=prev_risk_percent
         )
 
         clear_state()
@@ -621,6 +871,7 @@ def execute_close_only(action):
 
         entry_price = state.get("entry_price") if state else None
         opened_at = state.get("opened_at") if state else ""
+        prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
         pnl_gross = calc_gross_pnl("SHORT", closed_qty, entry_price, close_price)
 
         append_trade_log(
@@ -631,7 +882,8 @@ def execute_close_only(action):
             entry_price=entry_price,
             exit_price=close_price,
             pnl_gross=pnl_gross,
-            close_reason="close_short_only"
+            close_reason="close_short_only",
+            risk_percent_used=prev_risk_percent
         )
 
         clear_state()
@@ -654,7 +906,7 @@ def execute_close_only(action):
 # =========================
 @app.route("/", methods=["GET"])
 def home():
-    return "BOT ACTIVO", 200
+    return "BOT ACTIVO CON FILTRO IA", 200
 
 
 @app.route("/logs", methods=["GET"])
@@ -669,13 +921,22 @@ def download_event_logs():
     return send_file(EVENTS_LOG_FILE, as_attachment=True)
 
 
+@app.route("/state", methods=["GET"])
+def get_state():
+    state = load_state()
+    current = get_current_position_info()
+    return jsonify({
+        "saved_state": state,
+        "exchange_position": current
+    }), 200
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(silent=True) or {}
     print("Señal recibida:", data, flush=True)
 
     action = str(data.get("action", "")).lower().strip()
-
     valid_actions = ["buy", "sell", "close_long", "close_short"]
 
     if action not in valid_actions:
@@ -687,9 +948,33 @@ def webhook():
         }), 400
 
     try:
+        # BUY / SELL pasan por filtro IA
         if action in ["buy", "sell"]:
-            result = execute_flip(action)
+            ai_result = ai_filter_signal(action, data)
+
+            append_event_log(
+                action,
+                "AI filter evaluated",
+                ai_result
+            )
+
+            if ai_result["decision"] != "APPROVE":
+                return jsonify({
+                    "ok": True,
+                    "filtered": True,
+                    "message": "Trade bloqueado por filtro IA",
+                    "ai_result": ai_result,
+                    "received": data
+                }), 200
+
+            result = execute_flip(
+                action,
+                risk_percent_override=ai_result["risk_percent"]
+            )
+            result["ai_result"] = ai_result
+
         else:
+            # close_long / close_short no pasan por IA
             result = execute_close_only(action)
 
         print("Resultado trade:", result, flush=True)
