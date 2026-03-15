@@ -21,7 +21,7 @@ SECRET_KEY = os.getenv("BINGX_SECRET_KEY", "").strip()
 SYMBOL = os.getenv("SYMBOL", "BTC-USDT").strip()
 LEVERAGE = int(os.getenv("LEVERAGE", "5"))
 
-# Riesgo base de respaldo
+# Riesgo de respaldo
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "30"))
 
 # Colchón de seguridad
@@ -32,12 +32,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4").strip()
 AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "true").strip().lower() == "true"
 
-# Variable externa que ya tienes
-RISK_HIGH_PERCENT = float(os.getenv("RISK_HIGH_PERCENT", "85"))
-
-# Gestión interna fija
+# Porcentajes internos del sistema
 RISK_LOW_PERCENT = 30.0
 RISK_MEDIUM_PERCENT = 55.0
+RISK_HIGH_PERCENT = 85.0
 
 BASE_URL = "https://open-api.bingx.com"
 
@@ -45,8 +43,8 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 print(
     f"BOT CONFIG -> SYMBOL={SYMBOL}, LEVERAGE={LEVERAGE}, "
-    f"RISK_PERCENT={RISK_PERCENT}, QTY_BUFFER={QTY_BUFFER}, "
-    f"AI_FILTER_ENABLED={AI_FILTER_ENABLED}, OPENAI_MODEL={OPENAI_MODEL}",
+    f"QTY_BUFFER={QTY_BUFFER}, AI_FILTER_ENABLED={AI_FILTER_ENABLED}, "
+    f"OPENAI_MODEL={OPENAI_MODEL}",
     flush=True
 )
 
@@ -59,7 +57,7 @@ STATE_FILE = "position_state.json"
 
 
 # =========================
-# Utilidades generales
+# Utilidades
 # =========================
 def utc_now():
     return datetime.utcnow().isoformat()
@@ -129,7 +127,6 @@ def bingx_request(method, path, params=None):
 
     query = sign_params(params)
     url = f"{BASE_URL}{path}?{query}"
-
     headers = {"X-BX-APIKEY": API_KEY}
 
     if method.upper() == "GET":
@@ -234,14 +231,10 @@ def clear_state():
 # Lectura BingX
 # =========================
 def get_price():
-    data = bingx_request("GET", "/openApi/swap/v2/quote/price", {
-        "symbol": SYMBOL
-    })
-
+    data = bingx_request("GET", "/openApi/swap/v2/quote/price", {"symbol": SYMBOL})
     price = data.get("data", {}).get("price")
     if not price:
         raise Exception(f"No se pudo obtener el precio: {data}")
-
     return float(price)
 
 
@@ -263,14 +256,10 @@ def get_balance():
 
 
 def get_positions():
-    data = bingx_request("GET", "/openApi/swap/v2/user/positions", {
-        "symbol": SYMBOL
-    })
-
+    data = bingx_request("GET", "/openApi/swap/v2/user/positions", {"symbol": SYMBOL})
     positions = data.get("data", [])
     if isinstance(positions, dict):
         positions = [positions]
-
     return positions
 
 
@@ -314,29 +303,35 @@ def get_current_position_info():
             }
 
         if amount > 0:
-            return {
-                "side": "LONG",
-                "qty": abs(amount),
-                "entry_price": avg_price
-            }
+            return {"side": "LONG", "qty": abs(amount), "entry_price": avg_price}
         elif amount < 0:
-            return {
-                "side": "SHORT",
-                "qty": abs(amount),
-                "entry_price": avg_price
-            }
+            return {"side": "SHORT", "qty": abs(amount), "entry_price": avg_price}
 
-    return {
-        "side": "NONE",
-        "qty": 0.0,
-        "entry_price": None
-    }
+    return {"side": "NONE", "qty": 0.0, "entry_price": None}
 
 
 # =========================
 # IA - probabilidad
 # =========================
-def probability_to_risk(probability: int):
+def probability_to_risk(probability: int, alignment: str):
+    """
+    alignment:
+    - with_htf
+    - against_htf
+    - neutral_htf
+    """
+
+    # Neutral: no trade para mantenerlo limpio
+    if alignment == "neutral_htf":
+        return "REJECT", 0.0
+
+    # Contra 15m: solo entra con 30%, pero solo si supera 50
+    if alignment == "against_htf":
+        if probability <= 50:
+            return "REJECT", 0.0
+        return "COUNTER", RISK_LOW_PERCENT
+
+    # A favor del 15m
     if probability < 30:
         return "REJECT", 0.0
     elif 30 <= probability <= 59:
@@ -349,16 +344,18 @@ def probability_to_risk(probability: int):
 
 def ai_filter_signal(action, payload):
     """
-    El 15m no bloquea por sí solo.
-    Solo sube o baja la probabilidad final.
+    La IA no crea el setup.
+    Solo evalúa calidad y da probabilidad.
     """
 
     if not AI_FILTER_ENABLED:
+        alignment = str(payload.get("alignment", "neutral_htf")).lower().strip()
+        tier, risk_percent = probability_to_risk(100, alignment)
         return {
-            "decision": "APPROVE",
+            "decision": "APPROVE" if risk_percent > 0 else "REJECT",
             "probability": 100,
-            "tier": "HIGH",
-            "risk_percent": RISK_HIGH_PERCENT,
+            "tier": tier,
+            "risk_percent": risk_percent,
             "reason": "AI filter disabled"
         }
 
@@ -372,6 +369,8 @@ def ai_filter_signal(action, payload):
         }
 
     try:
+        alignment = str(payload.get("alignment", "neutral_htf")).lower().strip()
+
         signal_context = {
             "action": str(action).upper(),
             "symbol": payload.get("symbol", "BTCUSDT"),
@@ -379,53 +378,67 @@ def ai_filter_signal(action, payload):
             "source": payload.get("source", ""),
             "timeframe": payload.get("timeframe", "5m"),
             "htf": payload.get("htf", "15"),
+            "alignment": alignment,
+            "trend_15m": str(payload.get("trend_15m", "neutral")).lower().strip(),
+
             "close_price": safe_float(payload.get("close_price")),
             "ema13_5m": safe_float(payload.get("ema13")),
             "ema62_5m": safe_float(payload.get("ema62")),
             "ema200_5m": safe_float(payload.get("ema200")),
-            "adx_5m": safe_float(payload.get("adx")),
             "stoch_k_5m": safe_float(payload.get("stoch_k")),
             "stoch_d_5m": safe_float(payload.get("stoch_d")),
+            "atr_5m": safe_float(payload.get("atr")),
+            "atr_pct_5m": safe_float(payload.get("atr_pct")),
+
             "close_15m": safe_float(payload.get("close_15m")),
             "ema13_15m": safe_float(payload.get("ema13_15m")),
             "ema62_15m": safe_float(payload.get("ema62_15m")),
             "ema200_15m": safe_float(payload.get("ema200_15m")),
-            "adx_15m": safe_float(payload.get("adx_15m")),
             "stoch_k_15m": safe_float(payload.get("stoch_k_15m")),
             "stoch_d_15m": safe_float(payload.get("stoch_d_15m")),
-            "trend_15m": str(payload.get("trend_15m", "neutral")).lower(),
+            "atr_15m": safe_float(payload.get("atr_15m")),
+            "atr_pct_15m": safe_float(payload.get("atr_pct_15m")),
+
             "utc_time": utc_now()
         }
 
         system_prompt = """
-You are a conservative BTCUSDT trading probability evaluator.
+You are a conservative BTCUSDT signal quality evaluator.
 
-Important:
-- Main trigger timeframe is 5m.
-- 15m is NOT a hard blocker.
-- 15m only adjusts probability up or down.
-- If 5m is strong but 15m disagrees, lower probability instead of always rejecting.
-- Reject only if setup is very weak, noisy, strongly ranging, contradictory, or poor quality.
+The trading setup already exists.
+Your job is NOT to invent trades.
+Your job is ONLY to score the quality of the existing setup from 0 to 100.
 
-Return ONLY valid JSON:
+Important rules:
+- Main trigger is 5m.
+- 15m is the structural context.
+- The setup already passed the indicator logic.
+- You should evaluate:
+  1) ATR / expansion quality
+  2) stochastic timing quality
+  3) trend structure quality
+  4) whether the signal is clean or noisy
+- If the setup is weak, choppy, overextended, or low-quality, return a low score.
+- Return ONLY valid JSON.
+
+Return exactly:
 {
   "decision": "APPROVE" or "REJECT",
   "probability": 0,
   "reason": "short explanation"
 }
 
-Probability policy:
-- 0-29  = reject
-- 30-59 = low quality but executable
-- 60-80 = medium quality
-- 81-100 = high quality
+Probability interpretation:
+- 0-29: reject
+- 30-59: weak/acceptable
+- 60-80: medium/good
+- 81-100: strong
 """
 
-        user_prompt = f"Evaluate this BTCUSDT signal context:\n{json.dumps(signal_context, ensure_ascii=False)}"
+        user_prompt = f"Evaluate this BTCUSDT signal setup:\n{json.dumps(signal_context, ensure_ascii=False)}"
 
         response = client.responses.create(
             model=OPENAI_MODEL,
-            tools=[{"type": "web_search"}],
             input=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -450,9 +463,9 @@ Probability policy:
 
         probability = max(0, min(100, probability))
 
-        tier, risk_percent = probability_to_risk(probability)
+        tier, risk_percent = probability_to_risk(probability, alignment)
 
-        if decision != "APPROVE" or probability < 30:
+        if decision != "APPROVE" or risk_percent <= 0:
             return {
                 "decision": "REJECT",
                 "probability": probability,
@@ -609,227 +622,59 @@ def sync_state_with_exchange():
 
 
 # =========================
-# Flip principal
+# Apertura / cierre
 # =========================
-def execute_flip(action, risk_percent_override=None):
+def execute_open(action, risk_percent_override=None):
     state, current = sync_state_with_exchange()
-
     current_side = current["side"]
-    current_qty = current["qty"]
+
+    # No abrir más de una posición del mismo lado
+    if action == "buy" and current_side == "LONG":
+        return {"message": "Ya estás en LONG, no se abre otra posición."}
+
+    if action == "sell" and current_side == "SHORT":
+        return {"message": "Ya estás en SHORT, no se abre otra posición."}
+
+    # No abrir si hay posición opuesta todavía abierta
+    if action == "buy" and current_side == "SHORT":
+        return {"message": "Hay SHORT abierto. Para BUY primero debe llegar señal contraria de cierre."}
+
+    if action == "sell" and current_side == "LONG":
+        return {"message": "Hay LONG abierto. Para SELL primero debe llegar señal contraria de cierre."}
 
     new_qty, selected_risk_percent = calculate_order_quantity(risk_percent_override)
 
-    if action == "buy":
-        if current_side == "LONG":
-            return {"message": "Ya estás en LONG, no se abre otra posición."}
+    open_result = open_new_position(action, new_qty)
+    open_price, open_qty = extract_order_data(open_result)
+    open_qty = open_qty if open_qty is not None else new_qty
 
-        if current_side == "SHORT":
-            close_result = close_position(current_side, current_qty)
-            close_price, closed_qty = extract_order_data(close_result)
-            closed_qty = closed_qty if closed_qty is not None else current_qty
+    new_state = {
+        "side": "LONG" if action == "buy" else "SHORT",
+        "qty": open_qty,
+        "entry_price": open_price,
+        "opened_at": utc_now(),
+        "symbol": SYMBOL,
+        "leverage": LEVERAGE,
+        "risk_percent": selected_risk_percent
+    }
+    save_state(new_state)
 
-            entry_price = state.get("entry_price") if state else None
-            opened_at = state.get("opened_at") if state else ""
-            prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
-            pnl_gross = calc_gross_pnl("SHORT", closed_qty, entry_price, close_price)
-
-            append_trade_log(
-                opened_at=opened_at,
-                closed_at=utc_now(),
-                side="SHORT",
-                qty=closed_qty,
-                entry_price=entry_price,
-                exit_price=close_price,
-                pnl_gross=pnl_gross,
-                close_reason="flip_to_long",
-                risk_percent_used=prev_risk_percent
-            )
-
-            time.sleep(1)
-
-            open_result = open_new_position("buy", new_qty)
-            open_price, open_qty = extract_order_data(open_result)
-            open_qty = open_qty if open_qty is not None else new_qty
-
-            new_state = {
-                "side": "LONG",
-                "qty": open_qty,
-                "entry_price": open_price,
-                "opened_at": utc_now(),
-                "symbol": SYMBOL,
-                "leverage": LEVERAGE,
-                "risk_percent": selected_risk_percent
-            }
-            save_state(new_state)
-
-            return {
-                "message": "SHORT cerrado y LONG abierto",
-                "risk_percent_used": selected_risk_percent,
-                "closed_qty": closed_qty,
-                "closed_entry_price": entry_price,
-                "closed_exit_price": close_price,
-                "closed_pnl_gross": pnl_gross,
-                "opened_qty": open_qty,
-                "opened_entry_price": open_price,
-                "close_result": close_result,
-                "open_result": open_result
-            }
-
-        open_result = open_new_position("buy", new_qty)
-        open_price, open_qty = extract_order_data(open_result)
-        open_qty = open_qty if open_qty is not None else new_qty
-
-        new_state = {
-            "side": "LONG",
-            "qty": open_qty,
-            "entry_price": open_price,
-            "opened_at": utc_now(),
-            "symbol": SYMBOL,
-            "leverage": LEVERAGE,
-            "risk_percent": selected_risk_percent
-        }
-        save_state(new_state)
-
-        return {
-            "message": "BUY ejecutado",
-            "risk_percent_used": selected_risk_percent,
-            "sent_qty": open_qty,
-            "opened_entry_price": open_price,
-            "result": open_result
-        }
-
-    elif action == "sell":
-        if current_side == "SHORT":
-            return {"message": "Ya estás en SHORT, no se abre otra posición."}
-
-        if current_side == "LONG":
-            close_result = close_position(current_side, current_qty)
-            close_price, closed_qty = extract_order_data(close_result)
-            closed_qty = closed_qty if closed_qty is not None else current_qty
-
-            entry_price = state.get("entry_price") if state else None
-            opened_at = state.get("opened_at") if state else ""
-            prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
-            pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
-
-            append_trade_log(
-                opened_at=opened_at,
-                closed_at=utc_now(),
-                side="LONG",
-                qty=closed_qty,
-                entry_price=entry_price,
-                exit_price=close_price,
-                pnl_gross=pnl_gross,
-                close_reason="flip_to_short",
-                risk_percent_used=prev_risk_percent
-            )
-
-            time.sleep(1)
-
-            open_result = open_new_position("sell", new_qty)
-            open_price, open_qty = extract_order_data(open_result)
-            open_qty = open_qty if open_qty is not None else new_qty
-
-            new_state = {
-                "side": "SHORT",
-                "qty": open_qty,
-                "entry_price": open_price,
-                "opened_at": utc_now(),
-                "symbol": SYMBOL,
-                "leverage": LEVERAGE,
-                "risk_percent": selected_risk_percent
-            }
-            save_state(new_state)
-
-            return {
-                "message": "LONG cerrado y SHORT abierto",
-                "risk_percent_used": selected_risk_percent,
-                "closed_qty": closed_qty,
-                "closed_entry_price": entry_price,
-                "closed_exit_price": close_price,
-                "closed_pnl_gross": pnl_gross,
-                "opened_qty": open_qty,
-                "opened_entry_price": open_price,
-                "close_result": close_result,
-                "open_result": open_result
-            }
-
-        open_result = open_new_position("sell", new_qty)
-        open_price, open_qty = extract_order_data(open_result)
-        open_qty = open_qty if open_qty is not None else new_qty
-
-        new_state = {
-            "side": "SHORT",
-            "qty": open_qty,
-            "entry_price": open_price,
-            "opened_at": utc_now(),
-            "symbol": SYMBOL,
-            "leverage": LEVERAGE,
-            "risk_percent": selected_risk_percent
-        }
-        save_state(new_state)
-
-        return {
-            "message": "SELL ejecutado",
-            "risk_percent_used": selected_risk_percent,
-            "sent_qty": open_qty,
-            "opened_entry_price": open_price,
-            "result": open_result
-        }
-
-    else:
-        raise Exception(f"Acción inválida: {action}")
+    return {
+        "message": "BUY ejecutado" if action == "buy" else "SELL ejecutado",
+        "risk_percent_used": selected_risk_percent,
+        "sent_qty": open_qty,
+        "opened_entry_price": open_price,
+        "result": open_result
+    }
 
 
-# =========================
-# Cierre sin invertir
-# =========================
-def execute_close_only(action):
+def execute_close_by_opposite_signal(action):
     state, current = sync_state_with_exchange()
-
     current_side = current["side"]
     current_qty = current["qty"]
 
-    if action == "close_long":
-        if current_side != "LONG":
-            return {"message": "No hay LONG abierto para cerrar."}
-
-        close_result = close_position(current_side, current_qty)
-        close_price, closed_qty = extract_order_data(close_result)
-        closed_qty = closed_qty if closed_qty is not None else current_qty
-
-        entry_price = state.get("entry_price") if state else None
-        opened_at = state.get("opened_at") if state else ""
-        prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
-        pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
-
-        append_trade_log(
-            opened_at=opened_at,
-            closed_at=utc_now(),
-            side="LONG",
-            qty=closed_qty,
-            entry_price=entry_price,
-            exit_price=close_price,
-            pnl_gross=pnl_gross,
-            close_reason="close_long_only",
-            risk_percent_used=prev_risk_percent
-        )
-
-        clear_state()
-
-        return {
-            "message": "LONG cerrado sin abrir SHORT",
-            "closed_qty": closed_qty,
-            "closed_entry_price": entry_price,
-            "closed_exit_price": close_price,
-            "closed_pnl_gross": pnl_gross,
-            "close_result": close_result
-        }
-
-    elif action == "close_short":
-        if current_side != "SHORT":
-            return {"message": "No hay SHORT abierto para cerrar."}
-
+    # BUY señal contraria cierra SHORT
+    if action == "buy" and current_side == "SHORT":
         close_result = close_position(current_side, current_qty)
         close_price, closed_qty = extract_order_data(close_result)
         closed_qty = closed_qty if closed_qty is not None else current_qty
@@ -847,14 +692,14 @@ def execute_close_only(action):
             entry_price=entry_price,
             exit_price=close_price,
             pnl_gross=pnl_gross,
-            close_reason="close_short_only",
+            close_reason="opposite_buy_signal_close_only",
             risk_percent_used=prev_risk_percent
         )
 
         clear_state()
 
         return {
-            "message": "SHORT cerrado sin abrir LONG",
+            "message": "SHORT cerrado por señal BUY contraria",
             "closed_qty": closed_qty,
             "closed_entry_price": entry_price,
             "closed_exit_price": close_price,
@@ -862,8 +707,41 @@ def execute_close_only(action):
             "close_result": close_result
         }
 
-    else:
-        raise Exception(f"Acción inválida para cierre: {action}")
+    # SELL señal contraria cierra LONG
+    if action == "sell" and current_side == "LONG":
+        close_result = close_position(current_side, current_qty)
+        close_price, closed_qty = extract_order_data(close_result)
+        closed_qty = closed_qty if closed_qty is not None else current_qty
+
+        entry_price = state.get("entry_price") if state else None
+        opened_at = state.get("opened_at") if state else ""
+        prev_risk_percent = state.get("risk_percent", RISK_PERCENT) if state else RISK_PERCENT
+        pnl_gross = calc_gross_pnl("LONG", closed_qty, entry_price, close_price)
+
+        append_trade_log(
+            opened_at=opened_at,
+            closed_at=utc_now(),
+            side="LONG",
+            qty=closed_qty,
+            entry_price=entry_price,
+            exit_price=close_price,
+            pnl_gross=pnl_gross,
+            close_reason="opposite_sell_signal_close_only",
+            risk_percent_used=prev_risk_percent
+        )
+
+        clear_state()
+
+        return {
+            "message": "LONG cerrado por señal SELL contraria",
+            "closed_qty": closed_qty,
+            "closed_entry_price": entry_price,
+            "closed_exit_price": close_price,
+            "closed_pnl_gross": pnl_gross,
+            "close_result": close_result
+        }
+
+    return None
 
 
 # =========================
@@ -871,7 +749,7 @@ def execute_close_only(action):
 # =========================
 @app.route("/", methods=["GET"])
 def home():
-    return "BOT ACTIVO CON IA + 15M PROBABILITY", 200
+    return "BOT V2 ACTIVO - IA SOLO PARA PROBABILIDAD/TAMAÑO", 200
 
 
 @app.route("/logs", methods=["GET"])
@@ -901,21 +779,11 @@ def webhook():
     data = request.get_json(silent=True) or {}
     print("Señal recibida:", data, flush=True)
 
-    action = str(data.get("action", "")).lower().strip()
+    action_raw = str(data.get("action", "")).upper().strip()
+    action = "buy" if action_raw == "BUY" else "sell" if action_raw == "SELL" else ""
 
-    if action == "buy":
-        action = "buy"
-    elif action == "sell":
-        action = "sell"
-    elif action == "close_long":
-        action = "close_long"
-    elif action == "close_short":
-        action = "close_short"
-
-    valid_actions = ["buy", "sell", "close_long", "close_short"]
-
-    if action not in valid_actions:
-        append_event_log(action, "Acción inválida", {"received": data})
+    if action not in ["buy", "sell"]:
+        append_event_log(action_raw, "Acción inválida", {"received": data})
         return jsonify({
             "ok": False,
             "error": "Acción inválida",
@@ -923,56 +791,55 @@ def webhook():
         }), 400
 
     try:
-        if action in ["buy", "sell"]:
-            ai_result = ai_filter_signal(action, data)
+        state, current = sync_state_with_exchange()
+        current_side = current["side"]
 
-            print(
-                f"AI RESULT -> decision={ai_result.get('decision')}, "
-                f"probability={ai_result.get('probability')}, "
-                f"tier={ai_result.get('tier')}, "
-                f"risk_percent={ai_result.get('risk_percent')}, "
-                f"reason={ai_result.get('reason')}",
-                flush=True
-            )
+        # =========================
+        # 1) Si ya hay posición opuesta, señal contraria = cerrar
+        # =========================
+        close_result = execute_close_by_opposite_signal(action)
+        if close_result is not None:
+            print("CIERRE POR SEÑAL CONTRARIA ->", close_result, flush=True)
+            append_event_log(action, close_result.get("message", "Cierre por señal contraria"), close_result)
+            return jsonify({
+                "ok": True,
+                "result": close_result
+            }), 200
 
-            append_event_log(
-                action,
-                "AI filter evaluated",
-                ai_result
-            )
+        # =========================
+        # 2) Si no hay posición abierta del lado contrario, evaluar entrada con IA
+        # =========================
+        ai_result = ai_filter_signal(action, data)
 
-            if ai_result["decision"] != "APPROVE":
-                print("TRADE BLOQUEADO -> probabilidad insuficiente", flush=True)
-                return jsonify({
-                    "ok": True,
-                    "filtered": True,
-                    "message": "Trade bloqueado por probabilidad baja",
-                    "ai_result": ai_result,
-                    "received": data
-                }), 200
+        print(
+            f"AI RESULT -> decision={ai_result.get('decision')}, "
+            f"probability={ai_result.get('probability')}, "
+            f"tier={ai_result.get('tier')}, "
+            f"risk_percent={ai_result.get('risk_percent')}, "
+            f"reason={ai_result.get('reason')}",
+            flush=True
+        )
 
-            print(
-                f"TRADE APROBADO -> action={action}, "
-                f"probability={ai_result.get('probability')}, "
-                f"risk_percent={ai_result.get('risk_percent')}",
-                flush=True
-            )
+        append_event_log(action, "AI filter evaluated", ai_result)
 
-            result = execute_flip(
-                action,
-                risk_percent_override=ai_result["risk_percent"]
-            )
-            result["ai_result"] = ai_result
+        if ai_result["decision"] != "APPROVE":
+            print("TRADE BLOQUEADO -> probabilidad insuficiente", flush=True)
+            return jsonify({
+                "ok": True,
+                "filtered": True,
+                "message": "Trade bloqueado por probabilidad insuficiente",
+                "ai_result": ai_result,
+                "received": data
+            }), 200
 
-        else:
-            result = execute_close_only(action)
+        result = execute_open(
+            action,
+            risk_percent_override=ai_result["risk_percent"]
+        )
+        result["ai_result"] = ai_result
 
         print("Resultado trade:", result, flush=True)
-
-        try:
-            append_event_log(action, result.get("message", "Trade ejecutado"), result)
-        except Exception as log_error:
-            print("Error guardando event log:", log_error, flush=True)
+        append_event_log(action, result.get("message", "Trade ejecutado"), result)
 
         return jsonify({
             "ok": True,
