@@ -149,7 +149,11 @@ def utc_now():
     return datetime.now(
         timezone.utc
     ).isoformat()
-
+def fnum(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
 
 def secret_matches(
     received,
