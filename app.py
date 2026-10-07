@@ -4240,19 +4240,6 @@ Perdidas
 <div class="stat">
 
 <div class="label">
-BE
-</div>
-
-<div class="n">
-{{ stats.be }}
-</div>
-
-</div>
-
-
-<div class="stat">
-
-<div class="label">
 Winrate
 </div>
 
