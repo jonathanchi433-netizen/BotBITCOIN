@@ -9,7 +9,7 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import requests
@@ -23,7 +23,10 @@ from flask import Flask, jsonify, redirect, render_template_string, request, sen
 BOT_NAME = "BOT BTC BINGX 5M"
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
-BINGX_SYMBOL = os.getenv("BINGX_SYMBOL", "BTC-USDT").strip().upper()
+BINGX_SYMBOL = os.getenv(
+    "BINGX_SYMBOL",
+    "BTC-USDT",
+).strip().upper()
 
 TV_SYMBOLS = {
     item.strip().upper()
@@ -34,34 +37,114 @@ TV_SYMBOLS = {
     if item.strip()
 }
 
-BINGX_API_KEY = os.getenv("BINGX_API_KEY", "").strip()
+BINGX_API_KEY = os.getenv(
+    "BINGX_API_KEY",
+    "",
+).strip()
+
 BINGX_API_SECRET = (
-    os.getenv("BINGX_API_SECRET", "").strip()
-    or os.getenv("BINGX_SECRET_KEY", "").strip()
+    os.getenv(
+        "BINGX_API_SECRET",
+        "",
+    ).strip()
+    or os.getenv(
+        "BINGX_SECRET_KEY",
+        "",
+    ).strip()
 )
 
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
-CONTROL_SECRET = os.getenv("CONTROL_SECRET", WEBHOOK_SECRET).strip()
-MONITOR_SECRET = os.getenv("MONITOR_SECRET", "").strip()
+WEBHOOK_SECRET = os.getenv(
+    "WEBHOOK_SECRET",
+    "",
+).strip()
 
-BALANCE_PERCENT = float(os.getenv("BALANCE_PERCENT", "90"))
-LEVERAGE = int(os.getenv("LEVERAGE", "2"))
-FEE_RATE = float(os.getenv("FEE_RATE", "0.0005"))
+CONTROL_SECRET = os.getenv(
+    "CONTROL_SECRET",
+    WEBHOOK_SECRET,
+).strip()
 
-QTY_STEP_FALLBACK = float(os.getenv("QTY_STEP", "0.0001"))
-MIN_QTY_FALLBACK = float(os.getenv("MIN_QTY", "0.0001"))
+MONITOR_SECRET = os.getenv(
+    "MONITOR_SECRET",
+    "",
+).strip()
 
-POSITION_MODE = os.getenv("POSITION_MODE", "HEDGE").strip().upper()
+BALANCE_PERCENT = float(
+    os.getenv(
+        "BALANCE_PERCENT",
+        "90",
+    )
+)
 
-UPSTASH_REDIS_REST_URL = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
-UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
-STATE_PREFIX = os.getenv("STATE_PREFIX", "bot_btc_5m").strip()
-DATA_DIR = os.getenv("DATA_DIR", ".").strip()
+LEVERAGE = int(
+    os.getenv(
+        "LEVERAGE",
+        "2",
+    )
+)
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+FEE_RATE = float(
+    os.getenv(
+        "FEE_RATE",
+        "0.0005",
+    )
+)
 
-VALID_MODES = ["OFF", "LONG_ONLY", "SHORT_ONLY", "CLOSE_ONLY", "BOTH"]
+QTY_STEP_FALLBACK = float(
+    os.getenv(
+        "QTY_STEP",
+        "0.0001",
+    )
+)
+
+MIN_QTY_FALLBACK = float(
+    os.getenv(
+        "MIN_QTY",
+        "0.0001",
+    )
+)
+
+POSITION_MODE = os.getenv(
+    "POSITION_MODE",
+    "HEDGE",
+).strip().upper()
+
+UPSTASH_REDIS_REST_URL = os.getenv(
+    "UPSTASH_REDIS_REST_URL",
+    "",
+).strip()
+
+UPSTASH_REDIS_REST_TOKEN = os.getenv(
+    "UPSTASH_REDIS_REST_TOKEN",
+    "",
+).strip()
+
+STATE_PREFIX = os.getenv(
+    "STATE_PREFIX",
+    "bot_btc_5m",
+).strip()
+
+DATA_DIR = os.getenv(
+    "DATA_DIR",
+    ".",
+).strip()
+
+TELEGRAM_BOT_TOKEN = os.getenv(
+    "TELEGRAM_BOT_TOKEN",
+    "",
+).strip()
+
+TELEGRAM_CHAT_ID = os.getenv(
+    "TELEGRAM_CHAT_ID",
+    "",
+).strip()
+
+VALID_MODES = [
+    "OFF",
+    "LONG_ONLY",
+    "SHORT_ONLY",
+    "CLOSE_ONLY",
+    "BOTH",
+]
 
 SIGNAL_LOCK = threading.RLock()
 
@@ -70,9 +153,13 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
-logger = logging.getLogger(BOT_NAME)
+logger = logging.getLogger(
+    BOT_NAME
+)
 
-app = Flask(__name__)
+app = Flask(
+    __name__
+)
 
 
 # ============================================================
@@ -80,73 +167,92 @@ app = Flask(__name__)
 # ============================================================
 
 def utc_now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(
+        timezone.utc
+    ).isoformat()
 
 
-def fnum(value, default=0.0):
+def fnum(
+    value,
+    default=0.0,
+):
     try:
-        return float(value)
+        return float(
+            value
+        )
     except Exception:
         return default
 
 
-def fint(value, default=0):
+def fint(
+    value,
+    default=0,
+):
     try:
-        return int(float(value))
+        return int(
+            float(
+                value
+            )
+        )
     except Exception:
         return default
 
 
-def parse_time(value):
+def parse_time(
+    value,
+):
     if not value:
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(
+            tzinfo=timezone.utc
+        )
 
     try:
         dt = datetime.fromisoformat(
-            str(value).replace("Z", "+00:00")
+            str(
+                value
+            ).replace(
+                "Z",
+                "+00:00",
+            )
         )
 
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
 
         return dt
 
     except Exception:
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(
+            tzinfo=timezone.utc
+        )
 
 
-def secret_matches(received, expected):
+def secret_matches(
+    received,
+    expected,
+):
     return (
-        bool(received and expected)
+        bool(
+            received
+            and expected
+        )
         and hmac.compare_digest(
-            str(received),
-            str(expected),
+            str(
+                received
+            ),
+            str(
+                expected
+            ),
         )
     )
 
 
-def notify(message):
-    if not (
-        TELEGRAM_BOT_TOKEN
-        and TELEGRAM_CHAT_ID
-    ):
-        return
-
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": str(message)[:3900],
-            },
-            timeout=10,
-        )
-
-    except Exception:
-        pass
-
-
-def floor_step(value, step):
+def floor_step(
+    value,
+    step,
+):
     if step <= 0:
         return value
 
@@ -154,14 +260,23 @@ def floor_step(value, step):
         0,
         len(
             f"{step:.12f}"
-            .rstrip("0")
-            .split(".")[-1]
+            .rstrip(
+                "0"
+            )
+            .split(
+                "."
+            )[-1]
         ),
     )
 
     result = (
         math.floor(
-            (float(value) + 1e-12)
+            (
+                float(
+                    value
+                )
+                + 1e-12
+            )
             / step
         )
         * step
@@ -173,8 +288,12 @@ def floor_step(value, step):
     )
 
 
-def redact_error(message):
-    text = str(message)
+def redact_error(
+    message,
+):
+    text = str(
+        message
+    )
 
     for secret in (
         BINGX_API_KEY,
@@ -182,7 +301,9 @@ def redact_error(message):
         WEBHOOK_SECRET,
         CONTROL_SECRET,
     ):
+
         if secret:
+
             text = text.replace(
                 secret,
                 "***",
@@ -191,42 +312,101 @@ def redact_error(message):
     return text
 
 
+def notify(
+    message,
+):
+    if not (
+        TELEGRAM_BOT_TOKEN
+        and TELEGRAM_CHAT_ID
+    ):
+        return
+
+    try:
+
+        requests.post(
+            (
+                "https://api.telegram.org/bot"
+                f"{TELEGRAM_BOT_TOKEN}"
+                "/sendMessage"
+            ),
+            json={
+                "chat_id":
+                TELEGRAM_CHAT_ID,
+
+                "text":
+                str(
+                    message
+                )[:3900],
+            },
+            timeout=10,
+        )
+
+    except Exception:
+        pass
+
+
 # ============================================================
 # ALMACENAMIENTO
 # ============================================================
 
 class Store:
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         os.makedirs(
             DATA_DIR,
             exist_ok=True,
         )
 
-        self.lock = threading.RLock()
+        self.lock = (
+            threading.RLock()
+        )
 
     @property
-    def redis_enabled(self):
+    def redis_enabled(
+        self,
+    ):
         return bool(
             UPSTASH_REDIS_REST_URL
             and UPSTASH_REDIS_REST_TOKEN
         )
 
-    def _key(self, name):
-        return f"{STATE_PREFIX}:{name}"
-
-    def _path(self, name):
-        return os.path.join(
-            DATA_DIR,
-            f"{STATE_PREFIX}_{name}.json",
+    def _key(
+        self,
+        name,
+    ):
+        return (
+            f"{STATE_PREFIX}:"
+            f"{name}"
         )
 
-    def _redis(self, command):
+    def _path(
+        self,
+        name,
+    ):
+        return os.path.join(
+            DATA_DIR,
+            (
+                f"{STATE_PREFIX}_"
+                f"{name}.json"
+            ),
+        )
+
+    def _redis(
+        self,
+        command,
+    ):
         response = requests.post(
-            UPSTASH_REDIS_REST_URL.rstrip("/"),
+            UPSTASH_REDIS_REST_URL.rstrip(
+                "/"
+            ),
             headers={
                 "Authorization":
-                f"Bearer {UPSTASH_REDIS_REST_TOKEN}",
+                (
+                    "Bearer "
+                    f"{UPSTASH_REDIS_REST_TOKEN}"
+                ),
 
                 "Content-Type":
                 "application/json",
@@ -235,19 +415,31 @@ class Store:
             timeout=12,
         )
 
-        payload = response.json()
+        payload = (
+            response.json()
+        )
 
         if (
-            response.status_code >= 400
-            or payload.get("error")
+            response.status_code
+            >= 400
+            or payload.get(
+                "error"
+            )
         ):
             raise RuntimeError(
-                f"Error Upstash: {payload}"
+                "Error Upstash: "
+                f"{payload}"
             )
 
-        return payload.get("result")
+        return payload.get(
+            "result"
+        )
 
-    def get(self, name, default):
+    def get(
+        self,
+        name,
+        default,
+    ):
         with self.lock:
 
             if self.redis_enabled:
@@ -255,18 +447,26 @@ class Store:
                 raw = self._redis(
                     [
                         "GET",
-                        self._key(name),
+                        self._key(
+                            name
+                        ),
                     ]
                 )
 
                 if not raw:
                     return default
 
-                return json.loads(raw)
+                return json.loads(
+                    raw
+                )
 
-            path = self._path(name)
+            path = self._path(
+                name
+            )
 
-            if not os.path.exists(path):
+            if not os.path.exists(
+                path
+            ):
                 return default
 
             with open(
@@ -274,9 +474,16 @@ class Store:
                 "r",
                 encoding="utf-8",
             ) as handle:
-                return json.load(handle)
 
-    def set(self, name, value):
+                return json.load(
+                    handle
+                )
+
+    def set(
+        self,
+        name,
+        value,
+    ):
         with self.lock:
 
             raw = json.dumps(
@@ -289,7 +496,9 @@ class Store:
                 self._redis(
                     [
                         "SET",
-                        self._key(name),
+                        self._key(
+                            name
+                        ),
                         raw,
                     ]
                 )
@@ -297,7 +506,9 @@ class Store:
                 return
 
             with open(
-                self._path(name),
+                self._path(
+                    name
+                ),
                 "w",
                 encoding="utf-8",
             ) as handle:
@@ -309,7 +520,9 @@ class Store:
                     indent=2,
                 )
 
-    def get_mode(self):
+    def get_mode(
+        self,
+    ):
         state = self.get(
             "mode",
             {},
@@ -325,8 +538,12 @@ class Store:
 
         return "OFF"
 
-    def set_mode(self, mode):
+    def set_mode(
+        self,
+        mode,
+    ):
         if mode not in VALID_MODES:
+
             raise ValueError(
                 "Modo inválido"
             )
@@ -334,30 +551,42 @@ class Store:
         self.set(
             "mode",
             {
-                "mode": mode,
-                "updated_at": utc_now(),
+                "mode":
+                mode,
+
+                "updated_at":
+                utc_now(),
             },
         )
 
-    def get_active_trade(self):
+    def get_active_trade(
+        self,
+    ):
         return self.get(
             "active_trade",
             None,
         )
 
-    def set_active_trade(self, trade):
+    def set_active_trade(
+        self,
+        trade,
+    ):
         self.set(
             "active_trade",
             trade,
         )
 
-    def clear_active_trade(self):
+    def clear_active_trade(
+        self,
+    ):
         self.set(
             "active_trade",
             None,
         )
 
-    def get_trades(self):
+    def get_trades(
+        self,
+    ):
         trades = self.get(
             "trades",
             [],
@@ -371,22 +600,38 @@ class Store:
 
         return []
 
-    def set_trades(self, trades):
+    def set_trades(
+        self,
+        trades,
+    ):
         self.set(
             "trades",
-            list(trades),
+            list(
+                trades
+            ),
         )
 
-    def append_trade(self, trade):
+    def append_trade(
+        self,
+        trade,
+    ):
         with self.lock:
 
-            trades = self.get_trades()
+            trades = (
+                self.get_trades()
+            )
 
-            trades.append(trade)
+            trades.append(
+                trade
+            )
 
-            self.set_trades(trades)
+            self.set_trades(
+                trades
+            )
 
-    def get_events(self):
+    def get_events(
+        self,
+    ):
         events = self.get(
             "events",
             [],
@@ -407,7 +652,9 @@ class Store:
     ):
         with self.lock:
 
-            events = self.get_events()
+            events = (
+                self.get_events()
+            )
 
             events.append(
                 {
@@ -415,16 +662,20 @@ class Store:
                     utc_now(),
 
                     "kind":
-                    str(kind),
+                    str(
+                        kind
+                    ),
 
                     "detail":
-                    redact_error(detail),
+                    redact_error(
+                        detail
+                    ),
                 }
             )
 
             self.set(
                 "events",
-                events[-100:],
+                events[-150:],
             )
 
 
@@ -445,7 +696,8 @@ class BingX:
         private=True,
     ):
         params = dict(
-            params or {}
+            params
+            or {}
         )
 
         headers = {}
@@ -461,8 +713,11 @@ class BingX:
                     "no están configuradas"
                 )
 
-            params["timestamp"] = int(
-                time.time() * 1000
+            params[
+                "timestamp"
+            ] = int(
+                time.time()
+                * 1000
             )
 
             params.setdefault(
@@ -505,7 +760,9 @@ class BingX:
             )
 
             if query:
-                url += f"?{query}"
+                url += (
+                    f"?{query}"
+                )
 
         response = requests.request(
             method,
@@ -515,25 +772,33 @@ class BingX:
         )
 
         try:
-            payload = response.json()
+
+            payload = (
+                response.json()
+            )
 
         except Exception:
+
             raise RuntimeError(
-                "BingX devolvió respuesta "
-                "no JSON: "
+                "BingX devolvió "
+                "respuesta no JSON: "
                 f"{response.status_code} "
                 f"{response.text[:300]}"
             )
 
         if (
-            response.status_code >= 400
+            response.status_code
+            >= 400
             or str(
-                payload.get("code")
+                payload.get(
+                    "code"
+                )
             )
             != "0"
         ):
             raise RuntimeError(
-                f"Error BingX: {payload}"
+                "Error BingX: "
+                f"{payload}"
             )
 
         return payload
@@ -542,11 +807,15 @@ class BingX:
     # PRECIO
     # ========================================================
 
-    def price(self):
-
+    def price(
+        self,
+    ):
         payload = self._request(
             "GET",
-            "/openApi/swap/v2/quote/price",
+            (
+                "/openApi/swap/"
+                "v2/quote/price"
+            ),
             {
                 "symbol":
                 BINGX_SYMBOL,
@@ -570,8 +839,12 @@ class BingX:
             )
 
         price = fnum(
-            data.get("price")
-            or data.get("lastPrice"),
+            data.get(
+                "price"
+            )
+            or data.get(
+                "lastPrice"
+            ),
             0,
         )
 
@@ -587,15 +860,15 @@ class BingX:
     # BALANCE
     # ========================================================
 
-    def available_balance(self):
-        """
-        BingX v3:
-        data.balance.availableMargin
-        """
-
+    def available_balance(
+        self,
+    ):
         payload = self._request(
             "GET",
-            "/openApi/swap/v3/user/balance",
+            (
+                "/openApi/swap/"
+                "v3/user/balance"
+            ),
         )
 
         data = payload.get(
@@ -626,11 +899,12 @@ class BingX:
                 nested,
                 list,
             ):
+
                 candidates.extend(
-                    x
-                    for x in nested
+                    item
+                    for item in nested
                     if isinstance(
-                        x,
+                        item,
                         dict,
                     )
                 )
@@ -644,15 +918,17 @@ class BingX:
                 list,
             ):
                 candidates.extend(
-                    x
-                    for x in balances
+                    item
+                    for item in balances
                     if isinstance(
-                        x,
+                        item,
                         dict,
                     )
                 )
 
-            candidates.append(data)
+            candidates.append(
+                data
+            )
 
         elif isinstance(
             data,
@@ -660,10 +936,10 @@ class BingX:
         ):
 
             candidates.extend(
-                x
-                for x in data
+                item
+                for item in data
                 if isinstance(
-                    x,
+                    item,
                     dict,
                 )
             )
@@ -671,9 +947,15 @@ class BingX:
         for item in candidates:
 
             asset = str(
-                item.get("asset")
-                or item.get("currency")
-                or item.get("coin")
+                item.get(
+                    "asset"
+                )
+                or item.get(
+                    "currency"
+                )
+                or item.get(
+                    "coin"
+                )
                 or ""
             ).upper()
 
@@ -694,11 +976,16 @@ class BingX:
                 if key not in item:
                     continue
 
-                value = item.get(key)
+                value = item.get(
+                    key
+                )
 
                 if isinstance(
                     value,
-                    (dict, list),
+                    (
+                        dict,
+                        list,
+                    ),
                 ):
                     continue
 
@@ -711,26 +998,34 @@ class BingX:
                     return available
 
         raise RuntimeError(
-            "No se pudo leer el "
-            "balance USDT disponible. "
-            "BingX respondió con una "
-            "estructura no reconocida."
+            "No se pudo leer "
+            "el balance USDT "
+            "disponible"
         )
 
     # ========================================================
-    # REGLAS CONTRATO
+    # REGLAS DEL CONTRATO
     # ========================================================
 
-    def contract_rules(self):
+    def contract_rules(
+        self,
+    ):
+        step = (
+            QTY_STEP_FALLBACK
+        )
 
-        step = QTY_STEP_FALLBACK
-        minimum = MIN_QTY_FALLBACK
+        minimum = (
+            MIN_QTY_FALLBACK
+        )
 
         try:
 
             payload = self._request(
                 "GET",
-                "/openApi/swap/v2/quote/contracts",
+                (
+                    "/openApi/swap/"
+                    "v2/quote/contracts"
+                ),
                 private=False,
             )
 
@@ -745,13 +1040,20 @@ class BingX:
             ):
 
                 data = (
-                    data.get("contracts")
-                    or data.get("data")
-                    or [data]
+                    data.get(
+                        "contracts"
+                    )
+                    or data.get(
+                        "data"
+                    )
+                    or [
+                        data
+                    ]
                 )
 
             for item in (
-                data or []
+                data
+                or []
             ):
 
                 if (
@@ -812,11 +1114,15 @@ class BingX:
     # POSICIONES
     # ========================================================
 
-    def positions(self):
-
+    def positions(
+        self,
+    ):
         payload = self._request(
             "GET",
-            "/openApi/swap/v2/user/positions",
+            (
+                "/openApi/swap/"
+                "v2/user/positions"
+            ),
             {
                 "symbol":
                 BINGX_SYMBOL,
@@ -832,12 +1138,15 @@ class BingX:
             data,
             dict,
         ):
-            data = [data]
+            data = [
+                data
+            ]
 
         result = []
 
         for item in (
-            data or []
+            data
+            or []
         ):
 
             if not isinstance(
@@ -855,7 +1164,8 @@ class BingX:
 
             if (
                 symbol
-                and symbol != BINGX_SYMBOL
+                and symbol
+                != BINGX_SYMBOL
             ):
                 continue
 
@@ -875,7 +1185,9 @@ class BingX:
                 0,
             )
 
-            if abs(amount) <= 0:
+            if abs(
+                amount
+            ) <= 0:
                 continue
 
             side = str(
@@ -896,7 +1208,9 @@ class BingX:
                     else "SHORT"
                 )
 
-            quantity = abs(amount)
+            quantity = abs(
+                amount
+            )
 
             entry_price = fnum(
                 item.get(
@@ -991,16 +1305,18 @@ class BingX:
         return result
 
     # ========================================================
-    # MODO DE POSICIÓN
+    # HEDGE
     # ========================================================
 
     def position_mode_is_hedge(
         self,
     ):
-
         payload = self._request(
             "GET",
-            "/openApi/swap/v1/positionSide/dual",
+            (
+                "/openApi/swap/"
+                "v1/positionSide/dual"
+            ),
         )
 
         data = payload.get(
@@ -1026,7 +1342,9 @@ class BingX:
             return raw
 
         return (
-            str(raw)
+            str(
+                raw
+            )
             .strip()
             .lower()
             == "true"
@@ -1035,7 +1353,6 @@ class BingX:
     def ensure_position_mode(
         self,
     ):
-
         if POSITION_MODE != "HEDGE":
             return
 
@@ -1044,7 +1361,10 @@ class BingX:
 
         self._request(
             "POST",
-            "/openApi/swap/v1/positionSide/dual",
+            (
+                "/openApi/swap/"
+                "v1/positionSide/dual"
+            ),
             {
                 "dualSidePosition":
                 "true",
@@ -1055,11 +1375,15 @@ class BingX:
     # MARGEN
     # ========================================================
 
-    def margin_type(self):
-
+    def margin_type(
+        self,
+    ):
         payload = self._request(
             "GET",
-            "/openApi/swap/v2/trade/marginType",
+            (
+                "/openApi/swap/"
+                "v2/trade/marginType"
+            ),
             {
                 "symbol":
                 BINGX_SYMBOL,
@@ -1084,16 +1408,21 @@ class BingX:
             )
         ).upper()
 
-    def set_isolated(self):
-
-        current = self.margin_type()
-
-        if current == "ISOLATED":
+    def set_isolated(
+        self,
+    ):
+        if (
+            self.margin_type()
+            == "ISOLATED"
+        ):
             return "ISOLATED"
 
         self._request(
             "POST",
-            "/openApi/swap/v2/trade/marginType",
+            (
+                "/openApi/swap/"
+                "v2/trade/marginType"
+            ),
             {
                 "symbol":
                 BINGX_SYMBOL,
@@ -1109,19 +1438,29 @@ class BingX:
     # APALANCAMIENTO
     # ========================================================
 
-    def set_leverage(self):
-
+    def set_leverage(
+        self,
+    ):
         sides = (
-            ("LONG", "SHORT")
-            if POSITION_MODE == "HEDGE"
-            else ("BOTH",)
+            (
+                "LONG",
+                "SHORT",
+            )
+            if POSITION_MODE
+            == "HEDGE"
+            else (
+                "BOTH",
+            )
         )
 
         for side in sides:
 
             self._request(
                 "POST",
-                "/openApi/swap/v2/trade/leverage",
+                (
+                    "/openApi/swap/"
+                    "v2/trade/leverage"
+                ),
                 {
                     "symbol":
                     BINGX_SYMBOL,
@@ -1138,8 +1477,9 @@ class BingX:
     # CANTIDAD
     # ========================================================
 
-    def quantity(self):
-
+    def quantity(
+        self,
+    ):
         balance = (
             self.available_balance()
         )
@@ -1203,7 +1543,6 @@ class BingX:
         self,
         direction,
     ):
-
         if POSITION_MODE == "HEDGE":
             return direction
 
@@ -1220,7 +1559,6 @@ class BingX:
         quantity,
         closing=False,
     ):
-
         reference_price = (
             self.price()
         )
@@ -1272,55 +1610,144 @@ class BingX:
 
         payload = self._request(
             "POST",
-            "/openApi/swap/v2/trade/order",
+            (
+                "/openApi/swap/"
+                "v2/trade/order"
+            ),
             params,
         )
 
-        data = payload.get(
+        order = payload.get(
             "data",
             {},
         )
 
         if (
             isinstance(
-                data,
+                order,
                 dict,
             )
             and isinstance(
-                data.get("order"),
+                order.get(
+                    "order"
+                ),
                 dict,
             )
         ):
-            data = data["order"]
+            order = order[
+                "order"
+            ]
 
-        order_id = None
-        price = reference_price
-        executed = quantity
-
-        if isinstance(
-            data,
+        if not isinstance(
+            order,
             dict,
         ):
+            order = {}
 
-            order_id = (
-                data.get("orderId")
-                or data.get("orderID")
+        order_id = (
+            order.get(
+                "orderId"
+            )
+            or order.get(
+                "orderID"
+            )
+        )
+
+        details = order
+
+        if order_id:
+
+            for _ in range(
+                6
+            ):
+
+                time.sleep(
+                    0.35
+                )
+
+                try:
+
+                    check = self._request(
+                        "GET",
+                        (
+                            "/openApi/swap/"
+                            "v2/trade/order"
+                        ),
+                        {
+                            "symbol":
+                            BINGX_SYMBOL,
+
+                            "orderId":
+                            order_id,
+                        },
+                    )
+
+                    details = check.get(
+                        "data",
+                        {},
+                    )
+
+                    if (
+                        isinstance(
+                            details,
+                            dict,
+                        )
+                        and isinstance(
+                            details.get(
+                                "order"
+                            ),
+                            dict,
+                        )
+                    ):
+                        details = details[
+                            "order"
+                        ]
+
+                    if not isinstance(
+                        details,
+                        dict,
+                    ):
+                        details = {}
+
+                    if (
+                        details.get(
+                            "avgPrice"
+                        )
+                        or details.get(
+                            "executedQty"
+                        )
+                    ):
+                        break
+
+                except Exception:
+                    pass
+
+        price = fnum(
+            details.get(
+                "avgPrice"
+            )
+            or details.get(
+                "price"
+            )
+            or reference_price,
+            reference_price,
+        )
+
+        if price <= 0:
+            price = (
+                reference_price
             )
 
-            price = fnum(
-                data.get("avgPrice")
-                or data.get("price"),
-                reference_price,
+        executed = fnum(
+            details.get(
+                "executedQty"
             )
-
-            if price <= 0:
-                price = reference_price
-
-            executed = fnum(
-                data.get("executedQty")
-                or data.get("quantity"),
-                quantity,
+            or details.get(
+                "quantity"
             )
+            or quantity,
+            quantity,
+        )
 
         return {
             "order_id":
@@ -1338,18 +1765,24 @@ bingx = BingX()
 
 
 # ============================================================
-# HISTORIAL
+# NORMALIZAR OPERACIONES
 # ============================================================
 
-def normalize_trade(raw):
-
+def normalize_trade(
+    raw,
+):
     raw = dict(
-        raw or {}
+        raw
+        or {}
     )
 
     side = str(
-        raw.get("side")
-        or raw.get("direction")
+        raw.get(
+            "side"
+        )
+        or raw.get(
+            "direction"
+        )
         or ""
     ).upper()
 
@@ -1377,7 +1810,9 @@ def normalize_trade(raw):
     entry = fnum(
         raw.get(
             "entry_price",
-            raw.get("entry"),
+            raw.get(
+                "entry"
+            ),
         ),
         0,
     )
@@ -1385,7 +1820,9 @@ def normalize_trade(raw):
     exit_price = fnum(
         raw.get(
             "exit_price",
-            raw.get("exit"),
+            raw.get(
+                "exit"
+            ),
         ),
         0,
     )
@@ -1393,7 +1830,9 @@ def normalize_trade(raw):
     quantity = fnum(
         raw.get(
             "quantity",
-            raw.get("qty"),
+            raw.get(
+                "qty"
+            ),
         ),
         0,
     )
@@ -1409,7 +1848,9 @@ def normalize_trade(raw):
     margin = fnum(
         raw.get(
             "margin_used",
-            raw.get("margin"),
+            raw.get(
+                "margin"
+            ),
         ),
         0,
     )
@@ -1417,7 +1858,9 @@ def normalize_trade(raw):
     risk = fnum(
         raw.get(
             "risk_usd",
-            raw.get("risk"),
+            raw.get(
+                "risk"
+            ),
         ),
         0,
     )
@@ -1425,13 +1868,17 @@ def normalize_trade(raw):
     fees = fnum(
         raw.get(
             "total_fees",
-            raw.get("fees"),
+            raw.get(
+                "fees"
+            ),
         ),
         0,
     )
 
     funding = fnum(
-        raw.get("funding"),
+        raw.get(
+            "funding"
+        ),
         0,
     )
 
@@ -1460,7 +1907,6 @@ def normalize_trade(raw):
         and exit_price > 0
         and quantity > 0
     ):
-
         calculated_gross = (
             (
                 exit_price
@@ -1475,7 +1921,9 @@ def normalize_trade(raw):
     )
 
     if gross is None:
-        gross = calculated_gross
+        gross = (
+            calculated_gross
+        )
 
     gross = fnum(
         gross,
@@ -1487,7 +1935,6 @@ def normalize_trade(raw):
     )
 
     if net is None:
-
         net = (
             gross
             - fees
@@ -1496,7 +1943,9 @@ def normalize_trade(raw):
 
     net = fnum(
         net,
-        gross - fees - funding,
+        gross
+        - fees
+        - funding,
     )
 
     move_pct = 0
@@ -1505,7 +1954,6 @@ def normalize_trade(raw):
         entry > 0
         and exit_price > 0
     ):
-
         move_pct = (
             (
                 exit_price
@@ -1516,36 +1964,42 @@ def normalize_trade(raw):
             * sign
         )
 
-    r_multiple = 0
-
-    if risk > 0:
-        r_multiple = (
-            net
-            / risk
-        )
+    r_multiple = (
+        net / risk
+        if risk > 0
+        else 0
+    )
 
     return {
         **raw,
 
         "id":
         str(
-            raw.get("id")
+            raw.get(
+                "id"
+            )
             or uuid.uuid4()
         ),
 
         "opened_at":
-        raw.get("opened_at")
+        raw.get(
+            "opened_at"
+        )
         or utc_now(),
 
         "closed_at":
-        raw.get("closed_at")
+        raw.get(
+            "closed_at"
+        )
         or utc_now(),
 
         "side":
         side,
 
         "symbol":
-        raw.get("symbol")
+        raw.get(
+            "symbol"
+        )
         or BINGX_SYMBOL,
 
         "entry_price":
@@ -1598,43 +2052,54 @@ def normalize_trade(raw):
     }
 
 
-def trade_summary(trades):
+# ============================================================
+# ESTADÍSTICAS
+# ============================================================
 
+def trade_summary(
+    trades,
+):
     ordered = sorted(
         trades,
-        key=lambda x:
-        x.get(
+        key=lambda item:
+        item.get(
             "closed_at",
             "",
         ),
     )
 
     wins = [
-        t
-        for t in ordered
+        trade
+        for trade in ordered
         if fnum(
-            t.get("net_pnl"),
+            trade.get(
+                "net_pnl"
+            ),
             0,
         )
         > 0.01
     ]
 
     losses = [
-        t
-        for t in ordered
+        trade
+        for trade in ordered
         if fnum(
-            t.get("net_pnl"),
+            trade.get(
+                "net_pnl"
+            ),
             0,
         )
         < -0.01
     ]
 
-    be = [
-        t
-        for t in ordered
+    breakeven = [
+        trade
+        for trade in ordered
         if abs(
             fnum(
-                t.get("net_pnl"),
+                trade.get(
+                    "net_pnl"
+                ),
                 0,
             )
         )
@@ -1643,77 +2108,95 @@ def trade_summary(trades):
 
     net = sum(
         fnum(
-            t.get("net_pnl"),
+            trade.get(
+                "net_pnl"
+            ),
             0,
         )
-        for t in ordered
+        for trade in ordered
     )
 
     gross = sum(
         fnum(
-            t.get("gross_pnl"),
+            trade.get(
+                "gross_pnl"
+            ),
             0,
         )
-        for t in ordered
+        for trade in ordered
     )
 
     fees = sum(
         fnum(
-            t.get("total_fees"),
+            trade.get(
+                "total_fees"
+            ),
             0,
         )
-        for t in ordered
+        for trade in ordered
     )
 
     funding = sum(
         fnum(
-            t.get("funding"),
+            trade.get(
+                "funding"
+            ),
             0,
         )
-        for t in ordered
+        for trade in ordered
     )
 
-    win_sum = sum(
+    gains = sum(
         fnum(
-            t.get("net_pnl"),
+            trade.get(
+                "net_pnl"
+            ),
             0,
         )
-        for t in wins
+        for trade in wins
     )
 
-    loss_sum = abs(
+    losses_abs = abs(
         sum(
             fnum(
-                t.get("net_pnl"),
+                trade.get(
+                    "net_pnl"
+                ),
                 0,
             )
-            for t in losses
+            for trade in losses
         )
     )
 
-    if loss_sum > 0:
+    if losses_abs > 0:
 
-        pf = (
-            win_sum
-            / loss_sum
+        profit_factor = (
+            gains
+            / losses_abs
         )
 
-    elif win_sum > 0:
+    elif gains > 0:
 
-        pf = 999
+        profit_factor = 999
 
     else:
 
-        pf = 0
+        profit_factor = 0
 
-    running = 0
-    peak = 0
-    max_dd = 0
+    curve = [
+        0.0
+    ]
 
-    for t in ordered:
+    running = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+
+    for trade in ordered:
 
         running += fnum(
-            t.get("net_pnl"),
+            trade.get(
+                "net_pnl"
+            ),
             0,
         )
 
@@ -1722,17 +2205,232 @@ def trade_summary(trades):
             running,
         )
 
-        max_dd = max(
-            max_dd,
+        max_drawdown = max(
+            max_drawdown,
             peak - running,
         )
 
-    r_global = 0
+        curve.append(
+            round(
+                running,
+                8,
+            )
+        )
 
-    for t in ordered:
+    starting_balance = 0.0
+
+    for trade in ordered:
+
+        candidate = fnum(
+            trade.get(
+                "balance_before"
+            ),
+            0,
+        )
+
+        if candidate > 0:
+
+            starting_balance = (
+                candidate
+            )
+
+            break
+
+    net_pct = (
+        net
+        / starting_balance
+        * 100
+        if starting_balance > 0
+        else 0
+    )
+
+    fees_pct = (
+        fees
+        / starting_balance
+        * 100
+        if starting_balance > 0
+        else 0
+    )
+
+    max_drawdown_pct = (
+        max_drawdown
+        / starting_balance
+        * 100
+        if starting_balance > 0
+        else 0
+    )
+
+    current_type = "—"
+    current_count = 0
+
+    max_win_streak = 0
+    max_loss_streak = 0
+
+    win_run = 0
+    loss_run = 0
+
+    for trade in ordered:
+
+        pnl = fnum(
+            trade.get(
+                "net_pnl"
+            ),
+            0,
+        )
+
+        if pnl > 0.01:
+
+            win_run += 1
+            loss_run = 0
+
+            max_win_streak = max(
+                max_win_streak,
+                win_run,
+            )
+
+        elif pnl < -0.01:
+
+            loss_run += 1
+            win_run = 0
+
+            max_loss_streak = max(
+                max_loss_streak,
+                loss_run,
+            )
+
+        else:
+
+            win_run = 0
+            loss_run = 0
+
+    for trade in reversed(
+        ordered
+    ):
+
+        pnl = fnum(
+            trade.get(
+                "net_pnl"
+            ),
+            0,
+        )
+
+        this_type = (
+            "W"
+            if pnl > 0.01
+            else (
+                "L"
+                if pnl < -0.01
+                else "BE"
+            )
+        )
+
+        if current_type == "—":
+
+            current_type = (
+                this_type
+            )
+
+            current_count = 1
+
+        elif this_type == current_type:
+
+            current_count += 1
+
+        else:
+            break
+
+    avg_win = (
+        gains
+        / len(
+            wins
+        )
+        if wins
+        else 0
+    )
+
+    avg_loss = (
+        -(
+            losses_abs
+            / len(
+                losses
+            )
+        )
+        if losses
+        else 0
+    )
+
+    long_trades = [
+        trade
+        for trade in ordered
+        if trade.get(
+            "side"
+        )
+        == "LONG"
+    ]
+
+    short_trades = [
+        trade
+        for trade in ordered
+        if trade.get(
+            "side"
+        )
+        == "SHORT"
+    ]
+
+    long_net = sum(
+        fnum(
+            trade.get(
+                "net_pnl"
+            ),
+            0,
+        )
+        for trade in long_trades
+    )
+
+    short_net = sum(
+        fnum(
+            trade.get(
+                "net_pnl"
+            ),
+            0,
+        )
+        for trade in short_trades
+    )
+
+    best_trade = max(
+        (
+            fnum(
+                trade.get(
+                    "net_pnl"
+                ),
+                0,
+            )
+            for trade in ordered
+        ),
+        default=0,
+    )
+
+    worst_trade = min(
+        (
+            fnum(
+                trade.get(
+                    "net_pnl"
+                ),
+                0,
+            )
+            for trade in ordered
+        ),
+        default=0,
+    )
+
+    r_global = 0.0
+
+    for trade in ordered:
 
         risk = fnum(
-            t.get("risk_usd"),
+            trade.get(
+                "risk_usd"
+            ),
             0,
         )
 
@@ -1740,33 +2438,73 @@ def trade_summary(trades):
 
             r_global += (
                 fnum(
-                    t.get("net_pnl"),
+                    trade.get(
+                        "net_pnl"
+                    ),
                     0,
                 )
                 / risk
             )
 
+    streak_label = {
+        "W":
+        (
+            f"{current_count} "
+            "GANADAS"
+        ),
+
+        "L":
+        (
+            f"{current_count} "
+            "PERDIDAS"
+        ),
+
+        "BE":
+        (
+            f"{current_count} "
+            "BE"
+        ),
+
+        "—":
+        "—",
+    }.get(
+        current_type,
+        "—",
+    )
+
     return {
         "count":
-        len(ordered),
+        len(
+            ordered
+        ),
 
         "wins":
-        len(wins),
+        len(
+            wins
+        ),
 
         "losses":
-        len(losses),
+        len(
+            losses
+        ),
 
         "be":
-        len(be),
+        len(
+            breakeven
+        ),
 
         "winrate":
         (
-            len(wins)
-            / len(ordered)
+            len(
+                wins
+            )
+            / len(
+                ordered
+            )
             * 100
-        )
-        if ordered
-        else 0,
+            if ordered
+            else 0
+        ),
 
         "net":
         net,
@@ -1781,18 +2519,77 @@ def trade_summary(trades):
         funding,
 
         "pf":
-        pf,
+        profit_factor,
 
         "max_dd":
-        max_dd,
+        max_drawdown,
+
+        "max_dd_pct":
+        max_drawdown_pct,
 
         "r_global":
         r_global,
+
+        "curve":
+        curve,
+
+        "starting_balance":
+        starting_balance,
+
+        "net_pct":
+        net_pct,
+
+        "fees_pct":
+        fees_pct,
+
+        "streak_type":
+        current_type,
+
+        "streak_count":
+        current_count,
+
+        "streak_label":
+        streak_label,
+
+        "max_win_streak":
+        max_win_streak,
+
+        "max_loss_streak":
+        max_loss_streak,
+
+        "avg_win":
+        avg_win,
+
+        "avg_loss":
+        avg_loss,
+
+        "long_count":
+        len(
+            long_trades
+        ),
+
+        "short_count":
+        len(
+            short_trades
+        ),
+
+        "long_net":
+        long_net,
+
+        "short_net":
+        short_net,
+
+        "best_trade":
+        best_trade,
+
+        "worst_trade":
+        worst_trade,
     }
 
 
-def csv_bytes(trades):
-
+def csv_bytes(
+    trades,
+):
     output = io.StringIO()
 
     fields = [
@@ -1825,7 +2622,10 @@ def csv_bytes(trades):
     writer.writeheader()
 
     for trade in trades:
-        writer.writerow(trade)
+
+        writer.writerow(
+            trade
+        )
 
     return output.getvalue().encode(
         "utf-8"
@@ -1837,7 +2637,6 @@ def csv_bytes(trades):
 # ============================================================
 
 def sync_position():
-
     positions = (
         bingx.positions()
     )
@@ -1846,7 +2645,9 @@ def sync_position():
         store.get_active_trade()
     )
 
-    if len(positions) > 1:
+    if len(
+        positions
+    ) > 1:
 
         return {
             "status":
@@ -1862,6 +2663,7 @@ def sync_position():
     if not positions:
 
         if stored:
+
             store.clear_active_trade()
 
         return {
@@ -1872,16 +2674,20 @@ def sync_position():
             None,
         }
 
-    live = positions[0]
+    live = positions[
+        0
+    ]
 
     if not stored:
 
         balance = 0
 
         try:
+
             balance = (
                 bingx.available_balance()
             )
+
         except Exception:
             pass
 
@@ -1895,30 +2701,44 @@ def sync_position():
             utc_now(),
 
             "side":
-            live["side"],
+            live[
+                "side"
+            ],
 
             "symbol":
             BINGX_SYMBOL,
 
             "quantity":
-            live["quantity"],
+            live[
+                "quantity"
+            ],
 
             "entry_price":
-            live["entry_price"],
+            live[
+                "entry_price"
+            ],
 
             "leverage":
-            live["leverage"],
+            live[
+                "leverage"
+            ],
 
             "balance_before":
             balance,
 
             "margin_used":
-            live["margin_used"],
+            live[
+                "margin_used"
+            ],
 
             "entry_fee":
             (
-                live["entry_price"]
-                * live["quantity"]
+                live[
+                    "entry_price"
+                ]
+                * live[
+                    "quantity"
+                ]
                 * FEE_RATE
             ),
 
@@ -1933,33 +2753,52 @@ def sync_position():
             stored
         )
 
+        store.add_event(
+            "MANUAL_SYNC",
+            (
+                "Posición detectada: "
+                f"{live['side']}"
+            ),
+        )
+
         notify(
             f"{BOT_NAME}: "
-            "posición manual detectada "
-            f"y adoptada: {live['side']}"
+            "posición manual "
+            "detectada y adoptada: "
+            f"{live['side']}"
         )
 
     else:
 
-        stored["side"] = (
-            live["side"]
-        )
+        stored[
+            "side"
+        ] = live[
+            "side"
+        ]
 
-        stored["quantity"] = (
-            live["quantity"]
-        )
+        stored[
+            "quantity"
+        ] = live[
+            "quantity"
+        ]
 
-        stored["entry_price"] = (
-            live["entry_price"]
-        )
+        stored[
+            "entry_price"
+        ] = live[
+            "entry_price"
+        ]
 
-        stored["leverage"] = (
-            live["leverage"]
-        )
+        stored[
+            "leverage"
+        ] = live[
+            "leverage"
+        ]
 
-        stored["margin_used"] = (
-            live["margin_used"]
-        )
+        stored[
+            "margin_used"
+        ] = live[
+            "margin_used"
+        ]
 
         store.set_active_trade(
             stored
@@ -1977,13 +2816,47 @@ def sync_position():
     }
 
 
+def wait_until_flat(
+    timeout=7.0,
+    interval=0.35,
+):
+    deadline = (
+        time.time()
+        + timeout
+    )
+
+    while (
+        time.time()
+        < deadline
+    ):
+
+        positions = (
+            bingx.positions()
+        )
+
+        if not positions:
+
+            store.clear_active_trade()
+
+            return True
+
+        time.sleep(
+            interval
+        )
+
+    return False
+
+
 # ============================================================
 # APERTURA
 # ============================================================
 
-def open_trade(direction):
-
-    sync = sync_position()
+def open_trade(
+    direction,
+):
+    sync = (
+        sync_position()
+    )
 
     if sync.get(
         "position"
@@ -1998,7 +2871,9 @@ def open_trade(direction):
         }
 
     if (
-        sync.get("reason")
+        sync.get(
+            "reason"
+        )
         == "multiple_positions"
     ):
 
@@ -2020,7 +2895,8 @@ def open_trade(direction):
 
     order_side = (
         "BUY"
-        if direction == "LONG"
+        if direction
+        == "LONG"
         else "SELL"
     )
 
@@ -2036,39 +2912,45 @@ def open_trade(direction):
     )
 
     quantity = (
-        fill["quantity"]
+        fill[
+            "quantity"
+        ]
     )
 
     entry_price = (
-        fill["price"]
+        fill[
+            "price"
+        ]
     )
 
-    time.sleep(0.45)
+    time.sleep(
+        0.45
+    )
 
     try:
 
-        live_positions = (
-            bingx.positions()
-        )
-
         matching = [
-            p
-            for p in live_positions
-            if p.get("side")
+            position
+            for position in bingx.positions()
+            if position.get(
+                "side"
+            )
             == direction
         ]
 
         if matching:
 
-            live = matching[0]
-
             quantity = (
-                live.get("quantity")
+                matching[0].get(
+                    "quantity"
+                )
                 or quantity
             )
 
             entry_price = (
-                live.get("entry_price")
+                matching[0].get(
+                    "entry_price"
+                )
                 or entry_price
             )
 
@@ -2168,9 +3050,12 @@ def open_trade(direction):
 # CIERRE
 # ============================================================
 
-def close_trade(reason):
-
-    sync = sync_position()
+def close_trade(
+    reason,
+):
+    sync = (
+        sync_position()
+    )
 
     trade = (
         store.get_active_trade()
@@ -2194,12 +3079,15 @@ def close_trade(reason):
         }
 
     direction = (
-        live["side"]
+        live[
+            "side"
+        ]
     )
 
     order_side = (
         "SELL"
-        if direction == "LONG"
+        if direction
+        == "LONG"
         else "BUY"
     )
 
@@ -2215,15 +3103,23 @@ def close_trade(reason):
     )
 
     exit_price = (
-        fill["price"]
+        fill[
+            "price"
+        ]
     )
 
     quantity = min(
         fnum(
-            fill["quantity"],
-            live["quantity"],
+            fill[
+                "quantity"
+            ],
+            live[
+                "quantity"
+            ],
         ),
-        live["quantity"],
+        live[
+            "quantity"
+        ],
     )
 
     entry_price = fnum(
@@ -2238,7 +3134,8 @@ def close_trade(reason):
 
     sign = (
         1
-        if direction == "LONG"
+        if direction
+        == "LONG"
         else -1
     )
 
@@ -2311,7 +3208,9 @@ def close_trade(reason):
             exit_price,
 
             "leverage":
-            live["leverage"],
+            live[
+                "leverage"
+            ],
 
             "margin_used":
             margin,
@@ -2364,7 +3263,7 @@ def close_trade(reason):
     notify(
         f"CIERRE {direction} "
         f"{BOT_NAME}\n"
-        "PnL neto aprox.: "
+        f"PnL neto aprox.: "
         f"{net:.2f} USDT\n"
         f"Motivo: {reason}"
     )
@@ -2379,23 +3278,40 @@ def close_trade(reason):
 
 
 # ============================================================
-# SEÑALES
+# LÓGICA DE SEÑALES
+# BOTH = REVERSIÓN REAL
 # ============================================================
 
-def process_signal(side):
-
+def process_signal(
+    side,
+):
     with SIGNAL_LOCK:
 
         mode = (
             store.get_mode()
         )
 
+        if mode == "OFF":
+
+            return {
+                "status":
+                "ignored",
+
+                "reason":
+                "mode_off",
+
+                "mode":
+                mode,
+            }
+
         sync = (
             sync_position()
         )
 
         if (
-            sync.get("reason")
+            sync.get(
+                "reason"
+            )
             == "multiple_positions"
         ):
 
@@ -2412,23 +3328,39 @@ def process_signal(side):
         )
 
         current_side = (
-            trade.get("side")
+            trade.get(
+                "side"
+            )
             if trade
             else None
         )
 
-        if mode == "OFF":
+        target_side = (
+            "LONG"
+            if side
+            == "BUY"
+            else "SHORT"
+        )
 
-            return {
-                "status":
-                "ignored",
-
-                "reason":
-                "mode_off",
-
-                "mode":
-                mode,
-            }
+        can_open = (
+            (
+                target_side
+                == "LONG"
+                and mode in {
+                    "LONG_ONLY",
+                    "BOTH",
+                }
+            )
+            or
+            (
+                target_side
+                == "SHORT"
+                and mode in {
+                    "SHORT_ONLY",
+                    "BOTH",
+                }
+            )
+        )
 
         result = {
             "status":
@@ -2437,77 +3369,225 @@ def process_signal(side):
             "mode":
             mode,
 
+            "signal":
+            side,
+
+            "target_side":
+            target_side,
+
             "closed":
             None,
 
             "opened":
             None,
+
+            "reversed":
+            False,
         }
 
-        # Señal contraria:
-        # cierra pero NO revierte
-        # en la misma alarma.
+        # Ya estamos en esa misma dirección.
+        # No duplica posición.
 
         if (
-            side == "BUY"
-            and current_side
-            == "SHORT"
+            current_side
+            == target_side
         ):
 
             result[
-                "closed"
-            ] = close_trade(
-                "opposite_buy_signal_5m"
+                "status"
+            ] = "ignored"
+
+            result[
+                "reason"
+            ] = (
+                "same_direction_"
+                "already_open"
             )
 
             return result
 
+        # Hay posición contraria.
+        # Primero cierra.
+
         if (
-            side == "SELL"
+            current_side
             and current_side
-            == "LONG"
+            != target_side
         ):
 
-            result[
-                "closed"
-            ] = close_trade(
+            close_reason = (
+                "opposite_buy_signal_5m"
+                if side
+                == "BUY"
+                else
                 "opposite_sell_signal_5m"
             )
 
+            closed = (
+                close_trade(
+                    close_reason
+                )
+            )
+
+            result[
+                "closed"
+            ] = closed
+
+            if (
+                closed.get(
+                    "status"
+                )
+                != "closed"
+            ):
+
+                result[
+                    "status"
+                ] = "blocked"
+
+                result[
+                    "reason"
+                ] = (
+                    "close_failed_"
+                    "reverse_cancelled"
+                )
+
+                store.add_event(
+                    "REVERSE_BLOCKED",
+                    (
+                        f"{current_side}"
+                        " -> "
+                        f"{target_side}: "
+                        "falló el cierre"
+                    ),
+                )
+
+                return result
+
+            # SOLO CERRAR
+            # Cierra y queda FLAT.
+
+            if mode == "CLOSE_ONLY":
+
+                result[
+                    "reason"
+                ] = "close_only_mode"
+
+                return result
+
+            # Si la nueva dirección
+            # no está permitida,
+            # cierra pero no abre.
+
+            if not can_open:
+
+                result[
+                    "reason"
+                ] = (
+                    "new_direction_"
+                    "not_allowed"
+                )
+
+                return result
+
+            # Esperar confirmación real
+            # de que BingX quedó FLAT.
+
+            if not wait_until_flat():
+
+                result[
+                    "status"
+                ] = "blocked"
+
+                result[
+                    "reason"
+                ] = (
+                    "bingx_not_flat_"
+                    "after_close"
+                )
+
+                store.add_event(
+                    "REVERSE_BLOCKED",
+                    (
+                        f"{current_side}"
+                        " -> "
+                        f"{target_side}: "
+                        "BingX no confirmó "
+                        "FLAT"
+                    ),
+                )
+
+                return result
+
+            # REVERSIÓN REAL:
+            # cierra una dirección
+            # y abre la contraria
+            # con ESA MISMA señal.
+
+            opened = (
+                open_trade(
+                    target_side
+                )
+            )
+
+            result[
+                "opened"
+            ] = opened
+
+            if (
+                opened.get(
+                    "status"
+                )
+                == "opened"
+            ):
+
+                result[
+                    "reversed"
+                ] = True
+
+                store.add_event(
+                    "REVERSAL",
+                    (
+                        f"{current_side}"
+                        " -> "
+                        f"{target_side}"
+                    ),
+                )
+
             return result
+
+        # Estamos FLAT.
 
         if mode == "CLOSE_ONLY":
+
+            result[
+                "reason"
+            ] = (
+                "close_only_flat"
+            )
+
             return result
 
-        if (
-            side == "BUY"
-            and mode in {
-                "LONG_ONLY",
-                "BOTH",
-            }
-            and current_side is None
-        ):
+        if can_open:
 
             result[
                 "opened"
-            ] = open_trade(
-                "LONG"
+            ] = (
+                open_trade(
+                    target_side
+                )
             )
 
-        elif (
-            side == "SELL"
-            and mode in {
-                "SHORT_ONLY",
-                "BOTH",
-            }
-            and current_side is None
-        ):
+            return result
 
-            result[
-                "opened"
-            ] = open_trade(
-                "SHORT"
-            )
+        result[
+            "status"
+        ] = "ignored"
+
+        result[
+            "reason"
+        ] = (
+            "direction_not_allowed"
+        )
 
         return result
 
@@ -2518,6 +3598,7 @@ def process_signal(side):
 
 PANEL_HTML = r"""
 <!doctype html>
+
 <html lang="es">
 
 <head>
@@ -2538,180 +3619,227 @@ BOT BTC BINGX
 :root{
 --bg:#05070a;
 --card:#12161c;
+--card2:#0c1016;
 --line:#29313c;
 --text:#f5f7fa;
---muted:#99a3b1;
+--muted:#94a0af;
 --green:#00df87;
 --red:#ff4963;
 --blue:#357df6;
 --gold:#c99a08;
+--white:#ffffff;
 }
 
 *{
-box-sizing:border-box
+box-sizing:border-box;
 }
 
 body{
 margin:0;
 background:var(--bg);
 color:var(--text);
-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 }
 
 main{
-max-width:920px;
+max-width:1050px;
 margin:auto;
-padding:24px
+padding:20px;
 }
 
 h1{
 font-size:42px;
-margin:18px 0 8px
-}
-
-h2{
-font-size:30px
+margin:18px 0 8px;
 }
 
 .center{
-text-align:center
+text-align:center;
 }
 
 .muted{
-color:var(--muted)
+color:var(--muted);
 }
 
 .card{
 background:var(--card);
 border:1px solid var(--line);
 border-radius:28px;
-padding:28px;
-margin:22px 0
+padding:26px;
+margin:20px 0;
 }
 
 .mode{
-font-size:54px;
+font-size:48px;
 font-weight:900;
 color:var(--green);
-text-align:center
+text-align:center;
+margin-top:6px;
 }
 
 .grid{
 display:grid;
 grid-template-columns:1fr 1fr;
-gap:14px
+gap:14px;
+}
+
+.stats{
+display:grid;
+grid-template-columns:repeat(4,1fr);
+gap:12px;
+}
+
+.stat{
+background:var(--card2);
+border:1px solid var(--line);
+border-radius:20px;
+padding:17px;
+min-height:104px;
+}
+
+.stat .label{
+color:var(--muted);
+font-size:13px;
+text-transform:uppercase;
+letter-spacing:.04em;
+}
+
+.stat .n{
+font-size:27px;
+font-weight:900;
+margin-top:8px;
+}
+
+.good{
+color:var(--green);
+}
+
+.bad{
+color:var(--red);
 }
 
 .btn,
 button{
 display:block;
 border:0;
-border-radius:20px;
-padding:22px 16px;
+border-radius:18px;
+padding:20px 14px;
 color:#fff;
 text-decoration:none;
-font-size:22px;
+font-size:20px;
 font-weight:800;
 text-align:center;
 cursor:pointer;
-width:100%
+width:100%;
 }
 
 .off{
-background:#68717f
+background:#68717f;
 }
 
 .long{
-background:#07934f
+background:#07934f;
 }
 
 .short{
-background:#bf233e
+background:#bf233e;
 }
 
 .close{
-background:#2769bd
+background:#2769bd;
 }
 
 .both{
-background:#bd9009
+background:#bd9009;
 }
 
 .blue{
-background:var(--blue)
+background:var(--blue);
 }
 
 .dark{
-background:#303640
+background:#303640;
 }
 
 .position{
-border-color:#0d9b63
+border-color:#0d9b63;
 }
 
 .big{
 font-size:28px;
-font-weight:800
+font-weight:900;
 }
 
-.stats{
-display:grid;
-grid-template-columns:1fr 1fr;
-gap:12px
+.warn{
+color:#ffd166;
+font-weight:700;
 }
 
-.stat{
-background:#0d1015;
+.chart-wrap{
+position:relative;
+background:#090d12;
 border:1px solid var(--line);
-border-radius:20px;
-padding:18px
+border-radius:22px;
+padding:14px;
+overflow:hidden;
 }
 
-.stat .n{
-font-size:28px;
-font-weight:800
+#curve{
+display:block;
+width:100%;
+height:260px;
 }
 
-.good{
-color:var(--green)
+.chart-head{
+display:flex;
+justify-content:space-between;
+gap:12px;
+align-items:flex-end;
+margin-bottom:10px;
 }
 
-.bad{
-color:var(--red)
+.chart-pnl{
+font-size:36px;
+font-weight:900;
+}
+
+.chart-sub{
+color:var(--muted);
+font-size:14px;
 }
 
 .row{
 display:grid;
 grid-template-columns:repeat(2,1fr);
-gap:12px
+gap:12px;
 }
 
 input,
 select{
 width:100%;
-padding:16px;
+padding:15px;
 border-radius:14px;
 border:1px solid var(--line);
 background:#0b0e12;
 color:#fff;
-font-size:16px
+font-size:16px;
 }
 
 table{
 width:100%;
 border-collapse:collapse;
-font-size:14px
+font-size:13px;
 }
 
 th,
 td{
 padding:10px;
 border-bottom:1px solid var(--line);
-text-align:left
+text-align:left;
+white-space:nowrap;
 }
 
 .tablewrap{
-overflow:auto
+overflow:auto;
 }
 
 .event{
@@ -2721,30 +3849,62 @@ border-radius:14px;
 padding:12px;
 margin:8px 0;
 font-family:ui-monospace,monospace;
-font-size:13px
+font-size:12px;
+overflow-wrap:anywhere;
 }
 
-.warn{
-color:#ffd166;
-font-weight:700
+.tag{
+display:inline-block;
+padding:4px 9px;
+border-radius:999px;
+background:#202630;
+color:#cdd5df;
+font-size:11px;
+font-weight:800;
+}
+
+.section-title{
+font-size:28px;
+font-weight:900;
+margin:0 0 18px;
+}
+
+@media(max-width:850px){
+
+.stats{
+grid-template-columns:1fr 1fr;
+}
+
 }
 
 @media(max-width:600px){
 
 main{
-padding:14px
+padding:12px;
 }
 
 h1{
-font-size:34px
+font-size:32px;
 }
 
 .mode{
-font-size:46px
+font-size:40px;
 }
 
 .row{
-grid-template-columns:1fr
+grid-template-columns:1fr;
+}
+
+.stats{
+grid-template-columns:1fr 1fr;
+}
+
+.chart-pnl{
+font-size:30px;
+}
+
+.grid{
+grid-template-columns:1fr 1fr;
 }
 
 }
@@ -2756,6 +3916,7 @@ grid-template-columns:1fr
 <body>
 
 <main>
+
 
 <div class="center">
 
@@ -2784,7 +3945,9 @@ MODO ACTUAL
 </div>
 
 <div class="mode">
-{{ mode }}
+
+{{ 'LONG + SHORT' if mode == 'BOTH' else mode }}
+
 </div>
 
 </section>
@@ -2792,13 +3955,16 @@ MODO ACTUAL
 
 <section class="grid">
 
+
 <form
 method="post"
 action="/setmode/OFF?secret={{ secret }}"
 >
+
 <button class="off">
 OFF
 </button>
+
 </form>
 
 
@@ -2806,9 +3972,11 @@ OFF
 method="post"
 action="/setmode/LONG_ONLY?secret={{ secret }}"
 >
+
 <button class="long">
 SOLO LONG
 </button>
+
 </form>
 
 
@@ -2816,9 +3984,11 @@ SOLO LONG
 method="post"
 action="/setmode/SHORT_ONLY?secret={{ secret }}"
 >
+
 <button class="short">
 SOLO SHORT
 </button>
+
 </form>
 
 
@@ -2826,9 +3996,11 @@ SOLO SHORT
 method="post"
 action="/setmode/CLOSE_ONLY?secret={{ secret }}"
 >
+
 <button class="close">
 SOLO CERRAR
 </button>
+
 </form>
 
 
@@ -2836,9 +4008,11 @@ SOLO CERRAR
 method="post"
 action="/setmode/BOTH?secret={{ secret }}"
 >
+
 <button class="both">
-AMBOS
+LONG + SHORT
 </button>
+
 </form>
 
 
@@ -2846,21 +4020,28 @@ AMBOS
 class="btn blue"
 href="/diagnostic?secret={{ secret }}"
 >
+
 PROBAR BINGX
+
 </a>
+
 
 </section>
 
 
 <section class="card position">
 
+
 <div class="grid">
 
 <div>
-<h2>
+
+<div class="section-title">
 Posición real BingX
-</h2>
 </div>
+
+</div>
+
 
 <form
 method="post"
@@ -2894,15 +4075,22 @@ SINCRONIZAR
 
 </div>
 
+
 <p>
 
 Entrada
 {{ '%.2f'|format(live.entry_price) }}
+
 ·
+
 {{ live.leverage }}x
+
 ·
+
 PnL flotante
+
 {{ '%.4f'|format(live.unrealized_pnl) }}
+
 USDT
 
 </p>
@@ -2917,98 +4105,481 @@ FLAT · Sin posición BTC abierta
 
 {% endif %}
 
+
 </section>
 
 
 <section class="card">
 
-<h2>
+
+<div class="chart-head">
+
+
+<div>
+
+<div class="muted">
+
+CURVA DE RENDIMIENTO · PnL REALIZADO
+
+</div>
+
+
+<div
+class="chart-pnl {{ 'good' if stats.net >= 0 else 'bad' }}"
+>
+
+${{ '%.2f'|format(stats.net) }}
+
+</div>
+
+
+<div class="chart-sub">
+
+{{ '%+.2f'|format(stats.net_pct) }}%
+desde el capital base registrado
+
+</div>
+
+</div>
+
+
+<div class="center">
+
+<div class="muted">
+RACHA ACTUAL
+</div>
+
+<div
+class="big {{
+'good'
+if stats.streak_type == 'W'
+else
+(
+'bad'
+if stats.streak_type == 'L'
+else ''
+)
+}}"
+>
+
+{{ stats.streak_label }}
+
+</div>
+
+</div>
+
+
+</div>
+
+
+<div class="chart-wrap">
+
+<svg
+id="curve"
+viewBox="0 0 1000 260"
+preserveAspectRatio="none"
+>
+</svg>
+
+</div>
+
+
+</section>
+
+
+<section class="card">
+
+
+<div class="section-title">
 Estadísticas
-</h2>
+</div>
+
 
 <div class="stats">
 
-<div class="stat">
-<div class="muted">OPERACIONES</div>
-<div class="n">{{ stats.count }}</div>
-</div>
 
 <div class="stat">
-<div class="muted">GANADAS</div>
-<div class="n good">{{ stats.wins }}</div>
+
+<div class="label">
+Operaciones
 </div>
 
-<div class="stat">
-<div class="muted">PERDIDAS</div>
-<div class="n bad">{{ stats.losses }}</div>
-</div>
-
-<div class="stat">
-<div class="muted">BE</div>
-<div class="n">{{ stats.be }}</div>
-</div>
-
-<div class="stat">
-<div class="muted">WINRATE</div>
 <div class="n">
+{{ stats.count }}
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Ganadas
+</div>
+
+<div class="n good">
+{{ stats.wins }}
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Perdidas
+</div>
+
+<div class="n bad">
+{{ stats.losses }}
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+BE
+</div>
+
+<div class="n">
+{{ stats.be }}
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Winrate
+</div>
+
+<div class="n">
+
 {{ '%.1f'|format(stats.winrate) }}%
-</div>
+
 </div>
 
-<div class="stat">
-<div class="muted">PNL NETO</div>
-<div class="n {{ 'good' if stats.net>=0 else 'bad' }}">
-${{ '%.2f'|format(stats.net) }}
-</div>
 </div>
 
+
 <div class="stat">
-<div class="muted">PROFIT FACTOR</div>
+
+<div class="label">
+Profit Factor
+</div>
+
 <div class="n">
+
 {{ '%.2f'|format(stats.pf) }}
-</div>
+
 </div>
 
-<div class="stat">
-<div class="muted">MAX DD</div>
-<div class="n">
-${{ '%.2f'|format(stats.max_dd) }}
-</div>
 </div>
 
-<div class="stat">
-<div class="muted">R GLOBAL</div>
-<div class="n">
-{{ '%.2f'|format(stats.r_global) }}R
-</div>
-</div>
 
 <div class="stat">
-<div class="muted">FEES EST.</div>
+
+<div class="label">
+PnL neto
+</div>
+
+<div
+class="n {{
+'good'
+if stats.net >= 0
+else
+'bad'
+}}"
+>
+
+${{ '%.2f'|format(stats.net) }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+PnL %
+</div>
+
+<div
+class="n {{
+'good'
+if stats.net_pct >= 0
+else
+'bad'
+}}"
+>
+
+{{ '%+.2f'|format(stats.net_pct) }}%
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Fees estimadas
+</div>
+
 <div class="n">
+
 ${{ '%.2f'|format(stats.fees) }}
+
 </div>
+
+<div class="muted">
+
+{{ '%.2f'|format(stats.fees_pct) }}%
+capital base
+
 </div>
 
 </div>
+
+
+<div class="stat">
+
+<div class="label">
+Max DD
+</div>
+
+<div class="n bad">
+
+${{ '%.2f'|format(stats.max_dd) }}
+
+</div>
+
+<div class="muted">
+
+{{ '%.2f'|format(stats.max_dd_pct) }}%
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+R global
+</div>
+
+<div class="n">
+
+{{ '%.2f'|format(stats.r_global) }}R
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Racha actual
+</div>
+
+<div
+class="n {{
+'good'
+if stats.streak_type == 'W'
+else
+(
+'bad'
+if stats.streak_type == 'L'
+else ''
+)
+}}"
+>
+
+{{ stats.streak_label }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Mejor racha W
+</div>
+
+<div class="n good">
+
+{{ stats.max_win_streak }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Peor racha L
+</div>
+
+<div class="n bad">
+
+{{ stats.max_loss_streak }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Promedio ganadora
+</div>
+
+<div class="n good">
+
+${{ '%.2f'|format(stats.avg_win) }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Promedio perdedora
+</div>
+
+<div class="n bad">
+
+${{ '%.2f'|format(stats.avg_loss) }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+LONG
+</div>
+
+<div class="n">
+
+{{ stats.long_count }}
+
+</div>
+
+<div
+class="{{
+'good'
+if stats.long_net >= 0
+else
+'bad'
+}}"
+>
+
+${{ '%.2f'|format(stats.long_net) }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+SHORT
+</div>
+
+<div class="n">
+
+{{ stats.short_count }}
+
+</div>
+
+<div
+class="{{
+'good'
+if stats.short_net >= 0
+else
+'bad'
+}}"
+>
+
+${{ '%.2f'|format(stats.short_net) }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Mejor operación
+</div>
+
+<div class="n good">
+
+${{ '%.2f'|format(stats.best_trade) }}
+
+</div>
+
+</div>
+
+
+<div class="stat">
+
+<div class="label">
+Peor operación
+</div>
+
+<div class="n bad">
+
+${{ '%.2f'|format(stats.worst_trade) }}
+
+</div>
+
+</div>
+
+
+</div>
+
 
 </section>
 
 
 <section class="card">
 
-<h2>
+
+<div class="section-title">
 Últimos eventos
-</h2>
+</div>
+
 
 {% for e in events %}
 
 <div class="event">
 
 {{ e.time[:19].replace('T',' ') }}
+
 ·
+
 {{ e.kind }}
+
 ·
+
 {{ e.detail }}
 
 </div>
@@ -3016,19 +4587,24 @@ ${{ '%.2f'|format(stats.fees) }}
 {% else %}
 
 <p class="muted">
+
 Todavía no hay eventos.
+
 </p>
 
 {% endfor %}
+
 
 </section>
 
 
 <section class="card">
 
-<h2>
+
+<div class="section-title">
 Agregar operación manual
-</h2>
+</div>
+
 
 <form
 class="row"
@@ -3036,10 +4612,19 @@ method="post"
 action="/manual-trade?secret={{ secret }}"
 >
 
+
 <select name="side">
-<option>LONG</option>
-<option>SHORT</option>
+
+<option>
+LONG
+</option>
+
+<option>
+SHORT
+</option>
+
 </select>
+
 
 <input
 name="entry_price"
@@ -3049,6 +4634,7 @@ placeholder="Precio entrada"
 required
 >
 
+
 <input
 name="exit_price"
 type="number"
@@ -3057,12 +4643,14 @@ placeholder="Precio salida"
 required
 >
 
+
 <input
 name="quantity"
 type="number"
 step="any"
 placeholder="Cantidad BTC"
 >
+
 
 <input
 name="margin_used"
@@ -3071,12 +4659,22 @@ step="any"
 placeholder="Margen USDT"
 >
 
+
 <input
 name="risk_usd"
 type="number"
 step="any"
 placeholder="Riesgo $ opcional"
 >
+
+
+<input
+name="gross_pnl"
+type="number"
+step="any"
+placeholder="PnL bruto opcional"
+>
+
 
 <input
 name="net_pnl"
@@ -3085,12 +4683,14 @@ step="any"
 placeholder="PnL neto real opcional"
 >
 
+
 <input
 name="fees"
 type="number"
 step="any"
 placeholder="Comisiones"
 >
+
 
 <input
 name="funding"
@@ -3099,35 +4699,43 @@ step="any"
 placeholder="Funding"
 >
 
+
 <input
 name="opened_at"
 type="datetime-local"
 >
+
 
 <input
 name="closed_at"
 type="datetime-local"
 >
 
+
 <input
 name="notes"
 placeholder="Notas"
 >
 
+
 <button class="long">
 AGREGAR
 </button>
 
+
 </form>
+
 
 </section>
 
 
 <section class="card">
 
-<h2>
+
+<div class="section-title">
 Importar historial JSON
-</h2>
+</div>
+
 
 <form
 class="row"
@@ -3136,6 +4744,7 @@ action="/import-json?secret={{ secret }}"
 enctype="multipart/form-data"
 >
 
+
 <input
 type="file"
 name="file"
@@ -3143,131 +4752,441 @@ accept=".json,application/json"
 required
 >
 
+
 <select name="mode">
+
 <option value="append">
 AGREGAR
 </option>
+
 <option value="replace">
 REEMPLAZAR
 </option>
+
 </select>
+
 
 <button class="blue">
 IMPORTAR
 </button>
 
+
 </form>
+
 
 </section>
 
 
 <section class="grid">
 
+
 <a
 class="btn dark"
 href="/download?secret={{ secret }}"
 >
+
 DESCARGAR CSV
+
 </a>
+
 
 <a
 class="btn dark"
 href="/export-json?secret={{ secret }}"
 >
+
 EXPORTAR JSON
+
 </a>
+
 
 </section>
 
 
 <section class="card tablewrap">
 
+
 <table>
+
 
 <thead>
 
 <tr>
 
-<th>Cierre</th>
-<th>Lado</th>
-<th>Entrada</th>
-<th>Salida</th>
-<th>Margen</th>
-<th>Fees</th>
-<th>PnL neto</th>
-<th>R</th>
-<th>Motivo</th>
+<th>
+Cierre
+</th>
+
+<th>
+Lado
+</th>
+
+<th>
+Origen
+</th>
+
+<th>
+Entrada
+</th>
+
+<th>
+Salida
+</th>
+
+<th>
+Movimiento
+</th>
+
+<th>
+Margen
+</th>
+
+<th>
+Fees
+</th>
+
+<th>
+PnL neto
+</th>
+
+<th>
+R
+</th>
+
+<th>
+Motivo
+</th>
 
 </tr>
 
 </thead>
 
+
 <tbody>
+
 
 {% for t in trades %}
 
+
 <tr>
 
+
 <td>
+
 {{ t.closed_at[:19].replace('T',' ') }}
+
 </td>
+
 
 <td>
 {{ t.side }}
 </td>
 
+
 <td>
+
+<span class="tag">
+
+{{ t.source }}
+
+</span>
+
+</td>
+
+
+<td>
+
 {{ '%.2f'|format(t.entry_price) }}
+
 </td>
 
+
 <td>
+
 {{ '%.2f'|format(t.exit_price) }}
+
 </td>
 
+
 <td>
+
+{{ '%.3f'|format(t.price_move_pct) }}%
+
+</td>
+
+
+<td>
+
 ${{ '%.2f'|format(t.margin_used) }}
+
 </td>
 
+
 <td>
+
 ${{ '%.2f'|format(t.total_fees) }}
+
 </td>
+
 
 <td
-class="{{ 'good' if t.net_pnl>=0 else 'bad' }}"
+class="{{
+'good'
+if t.net_pnl >= 0
+else
+'bad'
+}}"
 >
+
 ${{ '%.2f'|format(t.net_pnl) }}
+
 </td>
 
+
 <td>
+
 {{ '%.2f'|format(t.r_multiple) }}R
+
 </td>
 
+
 <td>
+
 {{ t.close_reason }}
+
 </td>
+
 
 </tr>
 
+
 {% else %}
+
 
 <tr>
 
 <td
-colspan="9"
+colspan="11"
 class="center muted"
 >
+
 Todavía no hay operaciones.
+
 </td>
 
 </tr>
 
+
 {% endfor %}
+
 
 </tbody>
 
+
 </table>
 
+
 </section>
+
+
+<script>
+
+const values =
+{{ stats.curve|tojson }};
+
+const svg =
+document.getElementById(
+"curve"
+);
+
+
+function drawCurve(){
+
+if(!svg){
+return;
+}
+
+if(
+!values
+||
+!values.length
+){
+
+svg.innerHTML="";
+
+return;
+
+}
+
+
+const W=1000;
+const H=260;
+
+const padX=24;
+const padY=28;
+
+
+const minVal =
+Math.min(
+0,
+...values
+);
+
+
+const maxVal =
+Math.max(
+0,
+...values
+);
+
+
+const span =
+(maxVal-minVal)
+||
+1;
+
+
+const xFor =
+(i)=>
+values.length===1
+?
+W/2
+:
+padX
++
+(
+i
+/
+(values.length-1)
+)
+*
+(W-2*padX);
+
+
+const yFor =
+(v)=>
+H
+-
+padY
+-
+(
+(v-minVal)
+/
+span
+)
+*
+(H-2*padY);
+
+
+const zeroY =
+yFor(
+0
+);
+
+
+let pts="";
+
+
+values.forEach(
+(v,i)=>{
+
+pts +=
+`${xFor(i)},${yFor(v)} `;
+
+}
+);
+
+
+const last =
+values[
+values.length-1
+];
+
+
+const lx =
+xFor(
+values.length-1
+);
+
+
+const ly =
+yFor(
+last
+);
+
+
+const stateColor =
+last >= 0
+?
+"#00df87"
+:
+"#ff4963";
+
+
+const labelY =
+Math.max(
+20,
+Math.min(
+H-8,
+ly-12
+)
+);
+
+
+svg.innerHTML =
+`
+
+<line
+x1="${padX}"
+y1="${zeroY}"
+x2="${W-padX}"
+y2="${zeroY}"
+stroke="#38414c"
+stroke-width="2"
+stroke-dasharray="7 7"
+/>
+
+<polyline
+points="${pts}"
+fill="none"
+stroke="#ffffff"
+stroke-width="4"
+vector-effect="non-scaling-stroke"
+stroke-linejoin="round"
+stroke-linecap="round"
+/>
+
+<circle
+cx="${lx}"
+cy="${ly}"
+r="10"
+fill="${stateColor}"
+stroke="#ffffff"
+stroke-width="3"
+vector-effect="non-scaling-stroke"
+/>
+
+<text
+x="${Math.min(W-180,lx+18)}"
+y="${labelY}"
+fill="${stateColor}"
+font-size="28"
+font-weight="800"
+>
+
+${last>=0?"+":""}$${last.toFixed(2)}
+
+</text>
+
+`;
+
+}
+
+
+drawCurve();
+
+</script>
+
 
 </main>
 
@@ -3282,7 +5201,6 @@ Todavía no hay operaciones.
 # ============================================================
 
 def control_authorized():
-
     return secret_matches(
         request.args.get(
             "secret",
@@ -3298,7 +5216,6 @@ def control_authorized():
 
 @app.get("/")
 def home():
-
     return (
         f"{BOT_NAME} ACTIVO | "
         "REAL | "
@@ -3314,7 +5231,6 @@ def home():
 
 @app.get("/health")
 def health():
-
     return jsonify(
         {
             "status":
@@ -3345,13 +5261,21 @@ def health():
             store.get_mode(),
 
             "tv_symbols":
-            sorted(TV_SYMBOLS),
+            sorted(
+                TV_SYMBOLS
+            ),
 
             "state_prefix":
             STATE_PREFIX,
 
             "redis":
             store.redis_enabled,
+
+            "version":
+            (
+                "btc-both-"
+                "reversal-panel-v3"
+            ),
         }
     )
 
@@ -3364,6 +5288,7 @@ def health():
 def control():
 
     if not control_authorized():
+
         return (
             "Clave de panel inválida",
             403,
@@ -3379,7 +5304,9 @@ def control():
         )
 
         if (
-            sync.get("reason")
+            sync.get(
+                "reason"
+            )
             == "multiple_positions"
         ):
 
@@ -3409,12 +5336,16 @@ def control():
     )
 
     stats = (
-        trade_summary(trades)
+        trade_summary(
+            trades
+        )
     )
 
     events = list(
         reversed(
-            store.get_events()[-12:]
+            store.get_events()[
+                -15:
+            ]
         )
     )
 
@@ -3446,7 +5377,9 @@ def control():
 
         trades=
         list(
-            reversed(trades)
+            reversed(
+                trades
+            )
         ),
 
         stats=
@@ -3458,21 +5391,26 @@ def control():
 
 
 # ============================================================
-# CAMBIO MODO
+# CAMBIO DE MODO
 # ============================================================
 
 @app.post(
     "/setmode/<mode>"
 )
-def set_mode(mode):
+def set_mode(
+    mode,
+):
 
     if not control_authorized():
+
         return (
             "Clave de panel inválida",
             403,
         )
 
-    mode = mode.upper()
+    mode = (
+        mode.upper()
+    )
 
     if mode not in VALID_MODES:
 
@@ -3483,16 +5421,22 @@ def set_mode(mode):
             }
         ), 400
 
-    store.set_mode(mode)
+    store.set_mode(
+        mode
+    )
 
     store.add_event(
         "MODE",
-        f"Modo cambiado a {mode}",
+        (
+            "Modo cambiado a "
+            f"{mode}"
+        ),
     )
 
     notify(
         f"{BOT_NAME}: "
-        f"modo cambiado a {mode}"
+        f"modo cambiado a "
+        f"{mode}"
     )
 
     return redirect(
@@ -3509,6 +5453,7 @@ def set_mode(mode):
 def sync_route():
 
     if not control_authorized():
+
         return (
             "Clave de panel inválida",
             403,
@@ -3532,7 +5477,9 @@ def sync_route():
 
         store.add_event(
             "SYNC_ERROR",
-            redact_error(exc),
+            redact_error(
+                exc
+            ),
         )
 
     return redirect(
@@ -3542,7 +5489,7 @@ def sync_route():
 
 
 # ============================================================
-# DIAGNÓSTICO BINGX
+# DIAGNÓSTICO
 # ============================================================
 
 @app.get("/diagnostic")
@@ -3634,7 +5581,9 @@ def diagnostic():
     except Exception as exc:
 
         message = (
-            redact_error(exc)
+            redact_error(
+                exc
+            )
         )
 
         store.add_event(
@@ -3656,7 +5605,7 @@ def diagnostic():
 
 
 # ============================================================
-# MANUAL TRADE
+# OPERACIÓN MANUAL
 # ============================================================
 
 @app.post(
@@ -3770,11 +5719,29 @@ def manual_trade():
         "manual_panel",
     }
 
+    gross_input = (
+        request.form.get(
+            "gross_pnl"
+        )
+    )
+
     net_input = (
         request.form.get(
             "net_pnl"
         )
     )
+
+    if gross_input not in {
+        None,
+        "",
+    }:
+
+        raw[
+            "gross_pnl"
+        ] = fnum(
+            gross_input,
+            0,
+        )
 
     if net_input not in {
         None,
@@ -3801,7 +5768,7 @@ def manual_trade():
 
 
 # ============================================================
-# IMPORT JSON
+# IMPORTAR JSON
 # ============================================================
 
 @app.post(
@@ -3842,7 +5809,8 @@ def import_json():
     except Exception as exc:
 
         return (
-            f"JSON inválido: {exc}",
+            f"JSON inválido: "
+            f"{exc}",
             400,
         )
 
@@ -3902,18 +5870,26 @@ def import_json():
 
         existing_ids = {
             str(
-                t.get("id")
+                trade.get(
+                    "id"
+                )
             )
-            for t in existing
-            if t.get("id")
+            for trade in existing
+            if trade.get(
+                "id"
+            )
         }
 
         for trade in normalized:
 
-            if (
-                str(
-                    trade.get("id")
+            trade_id = str(
+                trade.get(
+                    "id"
                 )
+            )
+
+            if (
+                trade_id
                 in existing_ids
             ):
                 continue
@@ -3923,9 +5899,7 @@ def import_json():
             )
 
             existing_ids.add(
-                str(
-                    trade.get("id")
-                )
+                trade_id
             )
 
         store.set_trades(
@@ -3939,7 +5913,7 @@ def import_json():
 
 
 # ============================================================
-# CSV
+# DESCARGAR CSV
 # ============================================================
 
 @app.get("/download")
@@ -3952,14 +5926,10 @@ def download():
             403,
         )
 
-    trades = (
-        store.get_trades()
-    )
-
     return send_file(
         io.BytesIO(
             csv_bytes(
-                trades
+                store.get_trades()
             )
         ),
         mimetype=
@@ -3971,7 +5941,7 @@ def download():
 
 
 # ============================================================
-# EXPORT JSON
+# EXPORTAR JSON
 # ============================================================
 
 @app.get(
@@ -3992,7 +5962,7 @@ def export_json():
             "BOT BTC BINGX 5M",
 
             "version":
-            2,
+            3,
 
             "exportedAt":
             utc_now(),
@@ -4019,7 +5989,7 @@ def export_json():
 
 
 # ============================================================
-# WEBHOOK
+# WEBHOOK TRADINGVIEW
 # ============================================================
 
 @app.post("/webhook")
@@ -4034,14 +6004,22 @@ def webhook():
 
     safe_payload = {
         "side":
-        payload.get("side")
-        or payload.get("action"),
+        payload.get(
+            "side"
+        )
+        or payload.get(
+            "action"
+        ),
 
         "symbol":
-        payload.get("symbol"),
+        payload.get(
+            "symbol"
+        ),
 
         "timeframe":
-        payload.get("timeframe"),
+        payload.get(
+            "timeframe"
+        ),
     }
 
     logger.info(
@@ -4077,8 +6055,12 @@ def webhook():
         ), 403
 
     side = str(
-        payload.get("side")
-        or payload.get("action")
+        payload.get(
+            "side"
+        )
+        or payload.get(
+            "action"
+        )
         or ""
     ).upper().strip()
 
@@ -4101,11 +6083,6 @@ def webhook():
         "SELL",
     }:
 
-        store.add_event(
-            "WEBHOOK_REJECTED",
-            f"side={side}",
-        )
-
         return jsonify(
             {
                 "error":
@@ -4115,7 +6092,8 @@ def webhook():
 
     if (
         symbol not in TV_SYMBOLS
-        and symbol != BINGX_SYMBOL
+        and symbol
+        != BINGX_SYMBOL
     ):
 
         store.add_event(
@@ -4132,7 +6110,9 @@ def webhook():
                 symbol,
 
                 "allowed":
-                sorted(TV_SYMBOLS),
+                sorted(
+                    TV_SYMBOLS
+                ),
             }
         ), 400
 
@@ -4145,13 +6125,17 @@ def webhook():
 
         store.add_event(
             "WEBHOOK_REJECTED",
-            f"timeframe={timeframe}",
+            (
+                "timeframe="
+                f"{timeframe}"
+            ),
         )
 
         return jsonify(
             {
                 "error":
-                "Solo se aceptan señales 5M",
+                "Solo se aceptan "
+                "señales 5M",
 
                 "received":
                 timeframe,
@@ -4171,7 +6155,7 @@ def webhook():
             json.dumps(
                 result,
                 ensure_ascii=False,
-            )[:1200],
+            )[:1400],
         )
 
         return jsonify(
@@ -4187,7 +6171,9 @@ def webhook():
     except Exception as exc:
 
         message = (
-            redact_error(exc)
+            redact_error(
+                exc
+            )
         )
 
         logger.exception(
@@ -4250,7 +6236,9 @@ def monitor():
             "error",
 
             "error":
-            redact_error(exc),
+            redact_error(
+                exc
+            ),
         }
 
     return jsonify(
@@ -4279,7 +6267,9 @@ def monitor():
             ),
 
             "events":
-            store.get_events()[-10:],
+            store.get_events()[
+                -10:
+            ],
         }
     )
 
