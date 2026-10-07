@@ -20,19 +20,19 @@ from flask import Flask, jsonify, redirect, render_template_string, request, sen
 # CONFIGURACIÓN
 # ============================================================
 
-BOT_NAME = "BOT BTC BINGX 5M"
+BOT_NAME = "BOT ETH BINGX 5M"
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
 BINGX_SYMBOL = os.getenv(
     "BINGX_SYMBOL",
-    "BTC-USDT",
+    "ETH-USDT",
 ).strip().upper()
 
 TV_SYMBOLS = {
     item.strip().upper()
     for item in os.getenv(
         "TV_SYMBOLS",
-        "BTC-USDT,BTCUSDT,BTCUSDT.P,BINGX:BTCUSDT.P",
+        "ETH-USDT,ETHUSDT,ETHUSDT.P,BINGX:ETHUSDT.P",
     ).split(",")
     if item.strip()
 }
@@ -120,7 +120,7 @@ UPSTASH_REDIS_REST_TOKEN = os.getenv(
 
 STATE_PREFIX = os.getenv(
     "STATE_PREFIX",
-    "bot_btc_5m",
+    "bot_eth_5m",
 ).strip()
 
 DATA_DIR = os.getenv(
@@ -851,7 +851,7 @@ class BingX:
         if price <= 0:
             raise RuntimeError(
                 "No se pudo obtener "
-                "el precio de BTC"
+                "el precio de ETH"
             )
 
         return price
@@ -3611,7 +3611,7 @@ content="width=device-width,initial-scale=1"
 >
 
 <title>
-BOT BTC BINGX
+BOT ETH BINGX
 </title>
 
 <style>
@@ -3921,7 +3921,7 @@ grid-template-columns:1fr 1fr;
 <div class="center">
 
 <h1>
-₿ BOT BTC BINGX
+Ξ BOT ETH BINGX
 </h1>
 
 <div class="muted">
@@ -4071,7 +4071,7 @@ SINCRONIZAR
 <div class="big">
 
 {{ live.side }}
-· {{ live.quantity }} BTC
+· {{ live.quantity }} ETH
 
 </div>
 
@@ -4099,7 +4099,7 @@ USDT
 
 <p class="center muted">
 
-FLAT · Sin posición BTC abierta
+FLAT · Sin posición ETH abierta
 
 </p>
 
@@ -4648,7 +4648,7 @@ required
 name="quantity"
 type="number"
 step="any"
-placeholder="Cantidad BTC"
+placeholder="Cantidad ETH"
 >
 
 
@@ -5273,7 +5273,7 @@ def health():
 
             "version":
             (
-                "btc-both-"
+                "eth-both-"
                 "reversal-panel-v3"
             ),
         }
@@ -5312,7 +5312,7 @@ def control():
 
             warning = (
                 "Hay más de una "
-                "posición BTC abierta. "
+                "posición ETH abierta. "
                 "Las nuevas entradas "
                 "están bloqueadas."
             )
@@ -5936,7 +5936,7 @@ def download():
         "text/csv",
         as_attachment=True,
         download_name=
-        "btc_bot_historial.csv",
+        "eth_bot_historial.csv",
     )
 
 
@@ -5959,7 +5959,7 @@ def export_json():
     raw = json.dumps(
         {
             "app":
-            "BOT BTC BINGX 5M",
+            "BOT ETH BINGX 5M",
 
             "version":
             3,
@@ -5984,7 +5984,7 @@ def export_json():
         "application/json",
         as_attachment=True,
         download_name=
-        "btc_bot_historial.json",
+        "eth_bot_historial.json",
     )
 
 
@@ -6104,7 +6104,7 @@ def webhook():
         return jsonify(
             {
                 "error":
-                "Símbolo BTC no permitido",
+                "Símbolo ETH no permitido",
 
                 "received":
                 symbol,
