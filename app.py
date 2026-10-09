@@ -20,7 +20,7 @@ from flask import Flask, jsonify, redirect, render_template_string, request, sen
 # CONFIGURACIÓN
 # ============================================================
 
-BOT_NAME = "BOT ETH BINGX 5M"
+BOT_NAME = "BOT ETH BINGX 15M"
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
 BINGX_SYMBOL = os.getenv(
@@ -120,7 +120,7 @@ UPSTASH_REDIS_REST_TOKEN = os.getenv(
 
 STATE_PREFIX = os.getenv(
     "STATE_PREFIX",
-    "bot_eth_5m",
+    "bot_eth_15m",
 ).strip()
 
 DATA_DIR = os.getenv(
@@ -1558,15 +1558,19 @@ class BingX:
         direction,
         quantity,
         closing=False,
+        reference_price=None,
+        step=None,
     ):
-        reference_price = (
-            self.price()
-        )
+        if reference_price is None:
+            reference_price = (
+                self.price()
+            )
 
-        (
-            step,
-            _,
-        ) = self.contract_rules()
+        if step is None:
+            (
+                step,
+                _,
+            ) = self.contract_rules()
 
         quantity = floor_step(
             quantity,
@@ -2908,6 +2912,14 @@ def open_trade(
                 "quantity"
             ],
             closing=False,
+            reference_price=
+            calculation[
+                "price"
+            ],
+            step=
+            calculation[
+                "step"
+            ],
         )
     )
 
@@ -3416,11 +3428,11 @@ def process_signal(
         ):
 
             close_reason = (
-                "opposite_buy_signal_5m"
+                "opposite_buy_signal_15m"
                 if side
                 == "BUY"
                 else
-                "opposite_sell_signal_5m"
+                "opposite_sell_signal_15m"
             )
 
             closed = (
@@ -3927,7 +3939,7 @@ grid-template-columns:1fr 1fr;
 <div class="muted">
 
 {{ symbol }}
-· 5M
+· 15M
 · {{ leverage }}x
 · ISOLATED
 · {{ '%.1f'|format(balance_percent) }}% del balance
@@ -5233,7 +5245,7 @@ def health():
             BINGX_SYMBOL,
 
             "timeframe":
-            "5m",
+            "15m",
 
             "leverage":
             LEVERAGE,
@@ -5946,7 +5958,7 @@ def export_json():
     raw = json.dumps(
         {
             "app":
-            "BOT ETH BINGX 5M",
+            "BOT ETH BINGX 15M",
 
             "version":
             3,
@@ -6104,10 +6116,8 @@ def webhook():
         ), 400
 
     if timeframe not in {
-        "5",
-        "5m",
-        "05",
-        "05m",
+        "15",
+        "15m",
     }:
 
         store.add_event(
@@ -6122,7 +6132,7 @@ def webhook():
             {
                 "error":
                 "Solo se aceptan "
-                "señales 5M",
+                "señales 15M",
 
                 "received":
                 timeframe,
